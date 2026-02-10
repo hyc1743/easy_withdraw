@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Easy Withdraw</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .view { display: none; }
+    .view.active { display: block; }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+
+<!-- Nav -->
+<nav class="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center gap-6">
+  <span class="text-lg font-bold text-white">Easy Withdraw</span>
+  <button onclick="showView('accounts')" class="nav-btn text-gray-400 hover:text-white" id="nav-accounts">账户</button>
+  <button onclick="showView('withdraw')" class="nav-btn text-gray-400 hover:text-white" id="nav-withdraw">提现</button>
+  <button onclick="showView('history')" class="nav-btn text-gray-400 hover:text-white" id="nav-history">历史</button>
+  <div class="ml-auto">
+    <button onclick="doLock()" id="btn-lock" class="text-sm text-red-400 hover:text-red-300 hidden">锁定</button>
+  </div>
+</nav>
+
+<main class="max-w-2xl mx-auto p-6">
+  <!-- Toast -->
+  <div id="toast" class="hidden fixed top-4 right-4 px-4 py-2 rounded shadow-lg text-sm z-50"></div>
+
+  <!-- Unlock View -->
+  <div id="view-unlock" class="view active">
+    <div class="bg-gray-800 rounded-lg p-8 mt-12">
+      <h2 id="unlock-title" class="text-xl font-semibold mb-4">解锁</h2>
+      <input type="password" id="master-pw" placeholder="主密码"
+        class="w-full bg-gray-700 border border-gray-600 rounded px-4 py-2 mb-4 focus:outline-none focus:border-blue-500">
+      <button onclick="doAuth()" id="btn-auth"
+        class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-medium">解锁</button>
+    </div>
+  </div>
+
+  <!-- Accounts View -->
+  <div id="view-accounts" class="view">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-xl font-semibold">交易所账户</h2>
+      <button onclick="toggleAccountForm()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm">添加账户</button>
+    </div>
+    <div id="account-form" class="hidden bg-gray-800 rounded-lg p-6 mb-4">
+      <input id="acct-id" placeholder="账户 ID (如 gate_main)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <select id="acct-exchange" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+        <option value="gate">Gate</option>
+      </select>
+      <input id="acct-key" placeholder="API Key" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <input id="acct-secret" type="password" placeholder="API Secret" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <button onclick="saveAccount()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm w-full">保存</button>
+    </div>
+    <div id="account-list"></div>
+  </div>
+
+  <!-- Withdraw View -->
+  <div id="view-withdraw" class="view">
+    <h2 class="text-xl font-semibold mb-4">提现</h2>
+    <div class="bg-gray-800 rounded-lg p-6">
+      <select id="w-account" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+        <option value="">选择账户</option>
+      </select>
+      <input id="w-asset" placeholder="币种 (如 USDT)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <input id="w-network" placeholder="网络 (如 ETH, TRX)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <input id="w-address" placeholder="提现地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <input id="w-tag" placeholder="地址标签 / Memo (可选)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <input id="w-amount" placeholder="金额" type="number" step="any" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <div class="flex gap-3">
+        <button onclick="doPreview()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预校验</button>
+        <button onclick="doExecute()" class="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-2 rounded text-sm">执行提现</button>
+      </div>
+      <div id="w-result" class="mt-4 text-sm hidden bg-gray-700 rounded p-3"></div>
+    </div>
+  </div>
+
+  <!-- History View -->
+  <div id="view-history" class="view">
+    <h2 class="text-xl font-semibold mb-4">提现历史</h2>
+    <div id="history-list"></div>
+    <div class="flex justify-center mt-4 gap-3">
+      <button onclick="loadHistory(historyOffset - 20)" id="hist-prev" class="bg-gray-700 hover:bg-gray-600 px-4 py-1.5 rounded text-sm hidden">上一页</button>
+      <button onclick="loadHistory(historyOffset + 20)" id="hist-next" class="bg-gray-700 hover:bg-gray-600 px-4 py-1.5 rounded text-sm hidden">下一页</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let historyOffset = 0;
+
+// ---- API helpers ----
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch('/api' + path, opts);
+  const data = await res.json();
+  if (!res.ok && !data.ok) throw new Error(data.message || res.statusText);
+  return data;
+}
+
+function toast(msg, ok = true) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.className = `fixed top-4 right-4 px-4 py-2 rounded shadow-lg text-sm z-50 ${ok ? 'bg-green-700' : 'bg-red-700'}`;
+  setTimeout(() => el.className = 'hidden', 3000);
+}
+
+// ---- View switching ----
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  $('view-' + name).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-white'));
+  const nb = $('nav-' + name);
+  if (nb) nb.classList.add('text-white');
+  if (name === 'accounts') loadAccounts();
+  if (name === 'withdraw') loadAccountSelect();
+  if (name === 'history') loadHistory(0);
+}
+
+// ---- Auth ----
+async function checkStatus() {
+  const s = await api('GET', '/auth/status');
+  if (s.unlocked) {
+    $('btn-lock').classList.remove('hidden');
+    showView('withdraw');
+  } else if (!s.initialized) {
+    $('unlock-title').textContent = '设置主密码';
+    $('btn-auth').textContent = '初始化';
+  }
+}
+
+async function doAuth() {
+  const pw = $('master-pw').value;
+  if (!pw) return;
+  try {
+    const s = await api('GET', '/auth/status');
+    if (!s.initialized) {
+      await api('POST', '/auth/init', { masterPassword: pw });
+      toast('主密码已设置');
+    }
+    await api('POST', '/auth/unlock', { masterPassword: pw });
+    $('master-pw').value = '';
+    $('btn-lock').classList.remove('hidden');
+    toast('已解锁');
+    showView('withdraw');
+  } catch (e) { toast(e.message, false); }
+}
+
+async function doLock() {
+  await api('POST', '/auth/lock');
+  $('btn-lock').classList.add('hidden');
+  showView('unlock');
+  toast('已锁定');
+}
+
+// ---- Accounts ----
+function toggleAccountForm() {
+  $('account-form').classList.toggle('hidden');
+}
+
+async function loadAccounts() {
+  try {
+    const d = await api('GET', '/accounts');
+    const el = $('account-list');
+    if (!d.accounts.length) { el.innerHTML = '<p class="text-gray-500 text-sm">暂无账户</p>'; return; }
+    el.innerHTML = d.accounts.map(a => `
+      <div class="bg-gray-800 rounded p-4 mb-2 flex justify-between items-center">
+        <div><span class="font-medium">${a.id}</span> <span class="text-gray-400 text-sm ml-2">${a.exchange}</span></div>
+        <button onclick="deleteAccount('${a.id}')" class="text-red-400 hover:text-red-300 text-sm">删除</button>
+      </div>`).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+async function saveAccount() {
+  try {
+    await api('POST', '/accounts', {
+      id: $('acct-id').value,
+      exchange: $('acct-exchange').value,
+      api_key: $('acct-key').value,
+      api_secret: $('acct-secret').value,
+    });
+    $('acct-id').value = $('acct-key').value = $('acct-secret').value = '';
+    $('account-form').classList.add('hidden');
+    toast('账户已保存');
+    loadAccounts();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function deleteAccount(id) {
+  if (!confirm('确定删除账户 ' + id + '？')) return;
+  try {
+    await api('DELETE', '/accounts/' + id);
+    toast('已删除');
+    loadAccounts();
+  } catch (e) { toast(e.message, false); }
+}
+
+// ---- Withdraw ----
+async function loadAccountSelect() {
+  try {
+    const d = await api('GET', '/accounts');
+    const sel = $('w-account');
+    sel.innerHTML = '<option value="">选择账户</option>' +
+      d.accounts.map(a => `<option value="${a.id}">${a.id} (${a.exchange})</option>`).join('');
+  } catch (e) { /* ignore if locked */ }
+}
+
+function getWithdrawBody() {
+  return {
+    account_id: $('w-account').value,
+    asset: $('w-asset').value.toUpperCase(),
+    network: $('w-network').value.toUpperCase(),
+    address: $('w-address').value,
+    address_tag: $('w-tag').value || null,
+    amount: $('w-amount').value,
+  };
+}
+
+async function doPreview() {
+  try {
+    const r = await api('POST', '/withdraw/preview', getWithdrawBody());
+    $('w-result').classList.remove('hidden');
+    $('w-result').innerHTML = '<span class="text-green-400">校验通过</span>';
+  } catch (e) {
+    $('w-result').classList.remove('hidden');
+    $('w-result').innerHTML = `<span class="text-red-400">${e.message}</span>`;
+  }
+}
+
+async function doExecute() {
+  if (!confirm('确认执行提现？')) return;
+  try {
+    const r = await api('POST', '/withdraw/execute', getWithdrawBody());
+    $('w-result').classList.remove('hidden');
+    $('w-result').innerHTML = `<span class="text-green-400">提现成功 ID: ${r.withdraw_id} 状态: ${r.status}</span>`;
+    toast('提现已提交');
+  } catch (e) {
+    $('w-result').classList.remove('hidden');
+    $('w-result').innerHTML = `<span class="text-red-400">${e.message}</span>`;
+  }
+}
+
+// ---- History ----
+async function loadHistory(offset = 0) {
+  historyOffset = Math.max(0, offset);
+  try {
+    const d = await api('GET', `/withdraw/history?limit=20&offset=${historyOffset}`);
+    const el = $('history-list');
+    if (!d.records.length) { el.innerHTML = '<p class="text-gray-500 text-sm">暂无记录</p>'; return; }
+    el.innerHTML = d.records.map(r => `
+      <div class="bg-gray-800 rounded p-3 mb-2 text-sm">
+        <div class="flex justify-between">
+          <span class="font-medium">${r.asset} (${r.network})</span>
+          <span class="text-gray-400">${r.amount}</span>
+        </div>
+        <div class="text-gray-400 text-xs mt-1">${r.address}</div>
+        <div class="flex justify-between text-xs mt-1">
+          <span>${r.account_id}</span>
+          <span>${new Date(r.timestamp).toLocaleString()}</span>
+        </div>
+      </div>`).join('');
+    $('hist-prev').classList.toggle('hidden', historyOffset === 0);
+    $('hist-next').classList.toggle('hidden', historyOffset + 20 >= d.total);
+  } catch (e) { toast(e.message, false); }
+}
+
+// ---- Init ----
+$('master-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth(); });
+checkStatus();
+</script>
+</body>
+</html>

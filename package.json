@@ -1,0 +1,23 @@
+{
+  "name": "easy-withdraw",
+  "version": "0.1.0",
+  "description": "本地优先的交易所提现工具",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch server/index.ts",
+    "start": "tsx server/index.ts",
+    "build": "tsc",
+    "serve": "node dist/server/index.js"
+  },
+  "dependencies": {
+    "argon2": "^0.41.1",
+    "express": "^4.21.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
