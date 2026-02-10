@@ -7,6 +7,9 @@ import { requestLogger, requireSession } from "./middleware.js";
 import { authRoutes } from "./routes/auth.js";
 import { accountRoutes } from "./routes/accounts.js";
 import { withdrawRoutes } from "./routes/withdraw.js";
+import { currencyRoutes } from "./routes/currencies.js";
+import { addressRoutes } from "./routes/addresses.js";
+import { templateRoutes } from "./routes/templates.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -36,6 +39,9 @@ app.get("/api/health", (_req, res) => {
 // Routes
 app.use("/api/auth", authRoutes(session));
 app.use("/api/accounts", requireSession(session), accountRoutes(session));
+app.use("/api/currencies", requireSession(session), currencyRoutes(session));
+app.use("/api/addresses", requireSession(session), addressRoutes());
+app.use("/api/templates", requireSession(session), templateRoutes());
 app.use("/api/withdraw", requireSession(session), withdrawRoutes(session));
 
 app.listen(port, host, () => {

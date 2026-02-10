@@ -22,6 +22,25 @@ export interface DecryptedCreds {
   passphrase?: string;
 }
 
+export interface CurrencyInfo {
+  currency: string;
+  name_en: string;
+  withdraw_disabled: boolean;
+}
+
+export interface ChainInfo {
+  chain: string;
+  name_en: string;
+  is_withdraw_disabled: boolean;
+  is_deposit_disabled: boolean;
+  withdraw_fix: string;
+  withdraw_percent: string;
+  withdraw_amount_mini: string;
+  withdraw_eachtime_limit: string;
+  withdraw_day_limit: string;
+  decimal: number;
+}
+
 export interface ExchangeAdapter {
   validateRequest(req: WithdrawRequest): Promise<void>;
   withdraw(
@@ -32,4 +51,6 @@ export interface ExchangeAdapter {
     id: string,
     creds: DecryptedCreds,
   ): Promise<WithdrawResponse>;
+  listCurrencies(creds: DecryptedCreds): Promise<CurrencyInfo[]>;
+  listChains(currency: string, creds: DecryptedCreds): Promise<ChainInfo[]>;
 }

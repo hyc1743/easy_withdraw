@@ -16,6 +16,7 @@
 <nav class="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center gap-6">
   <span class="text-lg font-bold text-white">Easy Withdraw</span>
   <button onclick="showView('accounts')" class="nav-btn text-gray-400 hover:text-white" id="nav-accounts">账户</button>
+  <button onclick="showView('addressbook')" class="nav-btn text-gray-400 hover:text-white" id="nav-addressbook">地址簿</button>
   <button onclick="showView('withdraw')" class="nav-btn text-gray-400 hover:text-white" id="nav-withdraw">提现</button>
   <button onclick="showView('history')" class="nav-btn text-gray-400 hover:text-white" id="nav-history">历史</button>
   <div class="ml-auto">
@@ -23,9 +24,12 @@
   </div>
 </nav>
 
-<main class="max-w-2xl mx-auto p-6">
+<main class="max-w-6xl mx-auto p-6 flex gap-6">
   <!-- Toast -->
   <div id="toast" class="hidden fixed top-4 right-4 px-4 py-2 rounded shadow-lg text-sm z-50"></div>
+
+  <!-- Left column: main content -->
+  <div class="flex-1 min-w-0">
 
   <!-- Unlock View -->
   <div id="view-unlock" class="view active">
@@ -56,21 +60,77 @@
     <div id="account-list"></div>
   </div>
 
+  <!-- Address Book View -->
+  <div id="view-addressbook" class="view">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-xl font-semibold">地址簿</h2>
+      <button onclick="toggleAddrForm()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm">添加地址</button>
+    </div>
+    <div id="addr-form" class="hidden bg-gray-800 rounded-lg p-6 mb-4">
+      <input id="addr-label" placeholder="备注名称 (如 币安TRC20)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <input id="addr-address" placeholder="提现地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <button onclick="saveAddress()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm w-full">保存</button>
+    </div>
+    <div id="addr-list"></div>
+  </div>
+
   <!-- Withdraw View -->
   <div id="view-withdraw" class="view">
     <h2 class="text-xl font-semibold mb-4">提现</h2>
+    <!-- Template bar -->
+    <div class="flex gap-2 mb-4">
+      <select id="w-tpl" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <option value="">选择模版...</option>
+      </select>
+      <button onclick="loadTemplate()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded text-sm">加载</button>
+      <button onclick="saveTemplate()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded text-sm">保存</button>
+      <button onclick="deleteTemplate()" class="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded text-sm">删除</button>
+    </div>
     <div class="bg-gray-800 rounded-lg p-6">
-      <select id="w-account" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <select id="w-account" onchange="onAccountChange()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
         <option value="">选择账户</option>
       </select>
-      <input id="w-asset" placeholder="币种 (如 USDT)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
-      <input id="w-network" placeholder="网络 (如 ETH, TRX)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
-      <input id="w-address" placeholder="提现地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <div class="relative mb-3">
+        <input id="w-asset-search" placeholder="搜索币种..." autocomplete="off"
+          oninput="filterCurrencies()" onfocus="showCurrencyDropdown()"
+          class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <div id="w-asset-dropdown" class="hidden absolute z-10 w-full mt-1 bg-gray-700 border border-gray-600 rounded max-h-48 overflow-y-auto"></div>
+      </div>
+      <div class="relative mb-3">
+        <input id="w-network-search" placeholder="先选择币种" autocomplete="off" disabled
+          oninput="filterNetworks()" onfocus="showNetworkDropdown()"
+          class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <div id="w-network-dropdown" class="hidden absolute z-10 w-full mt-1 bg-gray-700 border border-gray-600 rounded max-h-48 overflow-y-auto"></div>
+      </div>
+      <div class="flex gap-2 mb-3">
+        <input id="w-address" placeholder="提现地址" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <button onclick="showAddrPicker()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded text-sm whitespace-nowrap">地址簿</button>
+      </div>
+      <div id="addr-picker" class="hidden bg-gray-700 border border-gray-600 rounded mb-3 max-h-48 overflow-y-auto"></div>
       <input id="w-tag" placeholder="地址标签 / Memo (可选)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
       <input id="w-amount" placeholder="金额" type="number" step="any" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
-      <div class="flex gap-3">
+      <div class="flex gap-3 mb-3">
         <button onclick="doPreview()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预校验</button>
-        <button onclick="doExecute()" class="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-2 rounded text-sm">执行提现</button>
+        <button onclick="doExecute()" class="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-2 rounded text-sm">单次提现</button>
+        <button onclick="toggleSchedulePanel()" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2 rounded text-sm">定时提现</button>
+      </div>
+      <!-- Schedule panel -->
+      <div id="schedule-panel" class="hidden bg-gray-700 rounded p-4 mb-3">
+        <div class="flex gap-3 mb-3">
+          <div class="flex-1">
+            <label class="text-xs text-gray-400">间隔（秒）</label>
+            <input id="sch-interval" type="number" min="1" value="60" class="w-full bg-gray-600 border border-gray-500 rounded px-3 py-2 text-sm">
+          </div>
+          <div class="flex-1">
+            <label class="text-xs text-gray-400">次数</label>
+            <input id="sch-count" type="number" min="1" value="5" class="w-full bg-gray-600 border border-gray-500 rounded px-3 py-2 text-sm">
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <button onclick="startSchedule()" id="btn-sch-start" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2 rounded text-sm">开始定时提现</button>
+          <button onclick="stopSchedule()" id="btn-sch-stop" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm hidden">停止提现</button>
+        </div>
+        <div id="sch-status" class="mt-3 text-sm hidden"></div>
       </div>
       <div id="w-result" class="mt-4 text-sm hidden bg-gray-700 rounded p-3"></div>
     </div>
@@ -85,11 +145,45 @@
       <button onclick="loadHistory(historyOffset + 20)" id="hist-next" class="bg-gray-700 hover:bg-gray-600 px-4 py-1.5 rounded text-sm hidden">下一页</button>
     </div>
   </div>
+  </div>
+
+  <!-- Right column: progress panel -->
+  <div id="progress-panel" class="w-80 shrink-0 hidden">
+    <div class="bg-gray-800 rounded-lg p-4 sticky top-6">
+      <h3 class="text-sm font-semibold mb-3 text-gray-300">提现进度</h3>
+      <div id="prog-summary" class="text-sm mb-3">
+        <div class="flex justify-between mb-1">
+          <span class="text-gray-400">状态</span>
+          <span id="prog-state" class="text-yellow-400">--</span>
+        </div>
+        <div class="flex justify-between mb-1">
+          <span class="text-gray-400">轮次</span>
+          <span id="prog-round">--</span>
+        </div>
+        <div class="flex justify-between mb-1">
+          <span class="text-gray-400">间隔</span>
+          <span id="prog-interval">--</span>
+        </div>
+        <div class="flex justify-between mb-1">
+          <span class="text-gray-400">下次执行</span>
+          <span id="prog-next">--</span>
+        </div>
+      </div>
+      <!-- Progress bar -->
+      <div class="w-full bg-gray-700 rounded-full h-2 mb-3">
+        <div id="prog-bar" class="bg-blue-500 h-2 rounded-full transition-all" style="width:0%"></div>
+      </div>
+      <h4 class="text-xs font-semibold text-gray-400 mb-2">执行日志</h4>
+      <div id="prog-log" class="space-y-1 max-h-96 overflow-y-auto text-xs"></div>
+    </div>
+  </div>
 </main>
 
 <script>
 const $ = (id) => document.getElementById(id);
 let historyOffset = 0;
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // ---- API helpers ----
 async function api(method, path, body) {
@@ -116,6 +210,7 @@ function showView(name) {
   const nb = $('nav-' + name);
   if (nb) nb.classList.add('text-white');
   if (name === 'accounts') loadAccounts();
+  if (name === 'addressbook') loadAddresses();
   if (name === 'withdraw') loadAccountSelect();
   if (name === 'history') loadHistory(0);
 }
@@ -168,8 +263,8 @@ async function loadAccounts() {
     if (!d.accounts.length) { el.innerHTML = '<p class="text-gray-500 text-sm">暂无账户</p>'; return; }
     el.innerHTML = d.accounts.map(a => `
       <div class="bg-gray-800 rounded p-4 mb-2 flex justify-between items-center">
-        <div><span class="font-medium">${a.id}</span> <span class="text-gray-400 text-sm ml-2">${a.exchange}</span></div>
-        <button onclick="deleteAccount('${a.id}')" class="text-red-400 hover:text-red-300 text-sm">删除</button>
+        <div><span class="font-medium">${esc(a.id)}</span> <span class="text-gray-400 text-sm ml-2">${esc(a.exchange)}</span></div>
+        <button onclick="deleteAccount('${esc(a.id)}')" class="text-red-400 hover:text-red-300 text-sm">删除</button>
       </div>`).join('');
   } catch (e) { toast(e.message, false); }
 }
@@ -198,21 +293,212 @@ async function deleteAccount(id) {
   } catch (e) { toast(e.message, false); }
 }
 
+// ---- Address Book ----
+function toggleAddrForm() {
+  $('addr-form').classList.toggle('hidden');
+}
+
+async function loadAddresses() {
+  try {
+    const d = await api('GET', '/addresses');
+    const el = $('addr-list');
+    if (!d.addresses.length) { el.innerHTML = '<p class="text-gray-500 text-sm">暂无地址</p>'; return; }
+    el.innerHTML = d.addresses.map(a => `
+      <div class="bg-gray-800 rounded p-4 mb-2">
+        <div class="flex justify-between items-center">
+          <span class="font-medium">${esc(a.label)}</span>
+          <button onclick="deleteAddress('${esc(a.label)}')" class="text-red-400 hover:text-red-300 text-sm">删除</button>
+        </div>
+        <div class="text-gray-400 text-xs mt-1 break-all">${esc(a.address)}</div>
+      </div>`).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+async function saveAddress() {
+  try {
+    await api('POST', '/addresses', {
+      label: $('addr-label').value,
+      address: $('addr-address').value,
+    });
+    ['addr-label','addr-address'].forEach(id => $(id).value = '');
+    $('addr-form').classList.add('hidden');
+    toast('地址已保存');
+    loadAddresses();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function deleteAddress(label) {
+  if (!confirm('确定删除地址 ' + label + '？')) return;
+  try {
+    await api('DELETE', '/addresses/' + encodeURIComponent(label));
+    toast('已删除');
+    loadAddresses();
+  } catch (e) { toast(e.message, false); }
+}
+
+let _pickerAddrs = [];
+
+async function showAddrPicker() {
+  const picker = $('addr-picker');
+  if (!picker.classList.contains('hidden')) { picker.classList.add('hidden'); return; }
+  try {
+    const d = await api('GET', '/addresses');
+    _pickerAddrs = d.addresses;
+    if (!_pickerAddrs.length) {
+      picker.innerHTML = '<div class="px-3 py-2 text-gray-400 text-sm">无地址</div>';
+    } else {
+      picker.innerHTML = _pickerAddrs.map((a, i) =>
+        `<div class="px-3 py-2 hover:bg-gray-600 cursor-pointer text-sm border-b border-gray-600" onclick="pickAddress(${i})">
+          <div class="font-medium">${esc(a.label)}</div>
+          <div class="text-gray-400 text-xs break-all">${esc(a.address)}</div>
+        </div>`
+      ).join('');
+    }
+    picker.classList.remove('hidden');
+  } catch (e) { toast(e.message, false); }
+}
+
+function pickAddress(idx) {
+  const a = _pickerAddrs[idx];
+  if (!a) return;
+  $('w-address').value = a.address;
+  $('addr-picker').classList.add('hidden');
+  toast('已选择地址: ' + a.label);
+}
+
 // ---- Withdraw ----
+let allCurrencies = [];
+let allChains = [];
+let selectedAsset = '';
+let selectedChain = '';
+
 async function loadAccountSelect() {
   try {
     const d = await api('GET', '/accounts');
     const sel = $('w-account');
     sel.innerHTML = '<option value="">选择账户</option>' +
-      d.accounts.map(a => `<option value="${a.id}">${a.id} (${a.exchange})</option>`).join('');
+      d.accounts.map(a => `<option value="${esc(a.id)}">${esc(a.id)} (${esc(a.exchange)})</option>`).join('');
   } catch (e) { /* ignore if locked */ }
+  loadTemplateSelect();
+}
+
+async function onAccountChange() {
+  const accountId = $('w-account').value;
+  allCurrencies = [];
+  allChains = [];
+  selectedAsset = '';
+  selectedChain = '';
+  $('w-asset-search').value = '';
+  $('w-network-search').value = '';
+  $('w-network-search').disabled = true;
+  $('w-network-search').placeholder = '先选择币种';
+  if (!accountId) return;
+  try {
+    $('w-asset-search').placeholder = '加载币种中...';
+    const d = await api('GET', `/currencies?account_id=${encodeURIComponent(accountId)}`);
+    allCurrencies = d.currencies;
+    $('w-asset-search').placeholder = `搜索币种 (共 ${allCurrencies.length} 个)...`;
+  } catch (e) {
+    toast(e.message, false);
+    $('w-asset-search').placeholder = '加载失败，请重试';
+  }
+}
+
+function filterCurrencies() {
+  const q = $('w-asset-search').value.toUpperCase();
+  const dd = $('w-asset-dropdown');
+  if (!allCurrencies.length) { dd.classList.add('hidden'); return; }
+  const filtered = allCurrencies
+    .filter(c => c.currency.includes(q) || c.name_en.toUpperCase().includes(q))
+    .slice(0, 50);
+  if (!filtered.length) {
+    dd.innerHTML = '<div class="px-3 py-2 text-gray-400 text-sm">无匹配结果</div>';
+  } else {
+    dd.innerHTML = filtered.map(c =>
+      `<div class="px-3 py-2 hover:bg-gray-600 cursor-pointer text-sm" onclick="selectCurrency('${esc(c.currency)}')">`
+      + `<span class="font-medium">${esc(c.currency)}</span>`
+      + (c.name_en ? ` <span class="text-gray-400 text-xs">${esc(c.name_en)}</span>` : '')
+      + `</div>`
+    ).join('');
+  }
+  dd.classList.remove('hidden');
+}
+
+function showCurrencyDropdown() {
+  filterCurrencies();
+}
+
+async function selectCurrency(currency) {
+  selectedAsset = currency;
+  $('w-asset-search').value = currency;
+  $('w-asset-dropdown').classList.add('hidden');
+  allChains = [];
+  selectedChain = '';
+  $('w-network-search').value = '';
+  $('w-network-search').disabled = true;
+  $('w-network-search').placeholder = '加载网络中...';
+  const accountId = $('w-account').value;
+  try {
+    const d = await api('GET', `/currencies/${encodeURIComponent(currency)}/chains?account_id=${encodeURIComponent(accountId)}`);
+    allChains = d.chains.filter(c => !c.is_withdraw_disabled);
+    if (!allChains.length) {
+      $('w-network-search').placeholder = '该币种无可用网络';
+      return;
+    }
+    $('w-network-search').disabled = false;
+    $('w-network-search').placeholder = `搜索网络 (共 ${allChains.length} 个)...`;
+  } catch (e) {
+    toast(e.message, false);
+    $('w-network-search').placeholder = '加载失败';
+  }
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#w-asset-search') && !e.target.closest('#w-asset-dropdown')) {
+    $('w-asset-dropdown').classList.add('hidden');
+  }
+  if (!e.target.closest('#w-network-search') && !e.target.closest('#w-network-dropdown')) {
+    $('w-network-dropdown').classList.add('hidden');
+  }
+});
+
+// ---- Network search ----
+function filterNetworks() {
+  const q = $('w-network-search').value.toUpperCase();
+  const dd = $('w-network-dropdown');
+  if (!allChains.length) { dd.classList.add('hidden'); return; }
+  const filtered = allChains
+    .filter(c => c.chain.toUpperCase().includes(q) || c.name_en.toUpperCase().includes(q))
+    .slice(0, 50);
+  if (!filtered.length) {
+    dd.innerHTML = '<div class="px-3 py-2 text-gray-400 text-sm">无匹配结果</div>';
+  } else {
+    dd.innerHTML = filtered.map(c =>
+      `<div class="px-3 py-2 hover:bg-gray-600 cursor-pointer text-sm" onclick="selectNetwork('${esc(c.chain)}')">`
+      + `<span class="font-medium">${esc(c.chain)}</span>`
+      + (c.name_en ? ` <span class="text-gray-400 text-xs">${esc(c.name_en)}</span>` : '')
+      + `</div>`
+    ).join('');
+  }
+  dd.classList.remove('hidden');
+}
+
+function showNetworkDropdown() {
+  filterNetworks();
+}
+
+function selectNetwork(chain) {
+  selectedChain = chain;
+  $('w-network-search').value = chain;
+  $('w-network-dropdown').classList.add('hidden');
 }
 
 function getWithdrawBody() {
   return {
     account_id: $('w-account').value,
-    asset: $('w-asset').value.toUpperCase(),
-    network: $('w-network').value.toUpperCase(),
+    asset: selectedAsset,
+    network: selectedChain,
     address: $('w-address').value,
     address_tag: $('w-tag').value || null,
     amount: $('w-amount').value,
@@ -226,20 +512,188 @@ async function doPreview() {
     $('w-result').innerHTML = '<span class="text-green-400">校验通过</span>';
   } catch (e) {
     $('w-result').classList.remove('hidden');
-    $('w-result').innerHTML = `<span class="text-red-400">${e.message}</span>`;
+    $('w-result').innerHTML = `<span class="text-red-400">${esc(e.message)}</span>`;
   }
 }
 
 async function doExecute() {
   if (!confirm('确认执行提现？')) return;
+  showProgressPanel();
   try {
     const r = await api('POST', '/withdraw/execute', getWithdrawBody());
     $('w-result').classList.remove('hidden');
-    $('w-result').innerHTML = `<span class="text-green-400">提现成功 ID: ${r.withdraw_id} 状态: ${r.status}</span>`;
+    $('w-result').innerHTML = `<span class="text-green-400">提现成功 ID: ${esc(r.withdraw_id)} 状态: ${esc(r.status)}</span>`;
     toast('提现已提交');
+    addProgressLog(`单次提现成功 - ID: ${r.withdraw_id}`, true);
   } catch (e) {
     $('w-result').classList.remove('hidden');
-    $('w-result').innerHTML = `<span class="text-red-400">${e.message}</span>`;
+    $('w-result').innerHTML = `<span class="text-red-400">${esc(e.message)}</span>`;
+    addProgressLog(`单次提现失败: ${e.message}`, false);
+  }
+}
+
+// ---- Templates ----
+let _allTemplates = [];
+
+async function loadTemplateSelect() {
+  try {
+    const d = await api('GET', '/templates');
+    _allTemplates = d.templates;
+    const sel = $('w-tpl');
+    sel.innerHTML = '<option value="">选择模版...</option>' +
+      _allTemplates.map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
+  } catch (e) { /* ignore */ }
+}
+
+async function loadTemplate() {
+  const name = $('w-tpl').value;
+  if (!name) return;
+  const tpl = _allTemplates.find(t => t.name === name);
+  if (!tpl) return;
+  if (tpl.account_id) $('w-account').value = tpl.account_id;
+  if (tpl.account_id) await onAccountChange();
+  if (tpl.asset) {
+    await selectCurrency(tpl.asset);
+    if (tpl.network) selectNetwork(tpl.network);
+  }
+  if (tpl.address) $('w-address').value = tpl.address;
+  if (tpl.amount) $('w-amount').value = tpl.amount;
+  toast('模版已加载: ' + name);
+}
+
+async function saveTemplate() {
+  const name = prompt('输入模版名称:');
+  if (!name) return;
+  try {
+    await api('POST', '/templates', {
+      name,
+      account_id: $('w-account').value,
+      asset: selectedAsset,
+      network: selectedChain,
+      address: $('w-address').value,
+      amount: $('w-amount').value,
+    });
+    toast('模版已保存');
+    loadTemplateSelect();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function deleteTemplate() {
+  const name = $('w-tpl').value;
+  if (!name) return;
+  if (!confirm('确定删除模版 ' + name + '？')) return;
+  try {
+    await api('DELETE', '/templates/' + encodeURIComponent(name));
+    toast('模版已删除');
+    loadTemplateSelect();
+  } catch (e) { toast(e.message, false); }
+}
+
+// ---- Scheduled withdraw ----
+let _schTimer = null;
+let _schDone = 0;
+let _schTotal = 0;
+let _schCountdown = null;
+let _schNextTime = 0;
+
+function toggleSchedulePanel() {
+  $('schedule-panel').classList.toggle('hidden');
+}
+
+function showProgressPanel() {
+  $('progress-panel').classList.remove('hidden');
+}
+
+function addProgressLog(msg, ok = true) {
+  const el = $('prog-log');
+  const time = new Date().toLocaleTimeString();
+  const color = ok ? 'text-green-400' : 'text-red-400';
+  el.innerHTML = `<div class="${color}">[${esc(time)}] ${esc(msg)}</div>` + el.innerHTML;
+}
+
+function updateProgressSummary() {
+  const pct = _schTotal > 0 ? Math.round((_schDone / _schTotal) * 100) : 0;
+  $('prog-bar').style.width = pct + '%';
+  $('prog-round').textContent = `${_schDone} / ${_schTotal}`;
+}
+
+function startCountdown(intervalSec) {
+  _schNextTime = Date.now() + intervalSec * 1000;
+  if (_schCountdown) clearInterval(_schCountdown);
+  _schCountdown = setInterval(() => {
+    const remain = Math.max(0, Math.ceil((_schNextTime - Date.now()) / 1000));
+    $('prog-next').textContent = remain > 0 ? remain + 's' : '--';
+    if (remain <= 0 && _schCountdown) { clearInterval(_schCountdown); _schCountdown = null; }
+  }, 500);
+}
+
+async function startSchedule() {
+  const interval = parseInt($('sch-interval').value) || 60;
+  const count = parseInt($('sch-count').value) || 1;
+  _schDone = 0;
+  _schTotal = count;
+  $('btn-sch-start').classList.add('hidden');
+  $('btn-sch-stop').classList.remove('hidden');
+  $('sch-status').classList.remove('hidden');
+  updateSchStatus();
+  // Show and init progress panel
+  showProgressPanel();
+  $('prog-log').innerHTML = '';
+  $('prog-state').textContent = '运行中';
+  $('prog-state').className = 'text-yellow-400';
+  $('prog-interval').textContent = interval + 's';
+  $('prog-round').textContent = `0 / ${count}`;
+  $('prog-next').textContent = '--';
+  $('prog-bar').style.width = '0%';
+  addProgressLog(`定时提现开始: ${count} 次, 间隔 ${interval}s`, true);
+  await doOneScheduled();
+  if (_schDone >= _schTotal) { stopSchedule(); return; }
+  startCountdown(interval);
+  _schTimer = setInterval(async () => {
+    await doOneScheduled();
+    if (_schDone >= _schTotal) { stopSchedule(); return; }
+    startCountdown(interval);
+  }, interval * 1000);
+}
+
+async function doOneScheduled() {
+  try {
+    const r = await api('POST', '/withdraw/execute', getWithdrawBody());
+    _schDone++;
+    updateSchStatus(`第 ${_schDone}/${_schTotal} 次成功 ID: ${r.withdraw_id}`);
+    updateProgressSummary();
+    addProgressLog(`第${_schDone}次成功 - ID: ${r.withdraw_id}`, true);
+  } catch (e) {
+    _schDone++;
+    updateSchStatus(`第 ${_schDone}/${_schTotal} 次失败: ${e.message}`);
+    updateProgressSummary();
+    addProgressLog(`第${_schDone}次失败: ${e.message}`, false);
+  }
+}
+
+function updateSchStatus(msg) {
+  const el = $('sch-status');
+  const base = `进度: ${_schDone}/${_schTotal}`;
+  el.innerHTML = msg ? `${base}<br><span class="text-gray-400 text-xs">${esc(msg)}</span>` : base;
+}
+
+function stopSchedule() {
+  if (_schTimer) { clearInterval(_schTimer); _schTimer = null; }
+  if (_schCountdown) { clearInterval(_schCountdown); _schCountdown = null; }
+  $('btn-sch-start').classList.remove('hidden');
+  $('btn-sch-stop').classList.add('hidden');
+  $('prog-next').textContent = '--';
+  if (_schDone >= _schTotal) {
+    $('prog-state').textContent = '已完成';
+    $('prog-state').className = 'text-green-400';
+    addProgressLog(`全部完成: ${_schDone}/${_schTotal}`, true);
+  } else {
+    $('prog-state').textContent = '已停止';
+    $('prog-state').className = 'text-red-400';
+    addProgressLog(`手动停止: 已完成 ${_schDone}/${_schTotal}`, false);
+  }
+  if (_schDone > 0) {
+    $('sch-status').innerHTML = `已完成 ${_schDone}/${_schTotal} 次提现`;
   }
 }
 
@@ -253,12 +707,12 @@ async function loadHistory(offset = 0) {
     el.innerHTML = d.records.map(r => `
       <div class="bg-gray-800 rounded p-3 mb-2 text-sm">
         <div class="flex justify-between">
-          <span class="font-medium">${r.asset} (${r.network})</span>
-          <span class="text-gray-400">${r.amount}</span>
+          <span class="font-medium">${esc(r.asset)} (${esc(r.network)})</span>
+          <span class="text-gray-400">${esc(r.amount)}</span>
         </div>
-        <div class="text-gray-400 text-xs mt-1">${r.address}</div>
+        <div class="text-gray-400 text-xs mt-1">${esc(r.address)}</div>
         <div class="flex justify-between text-xs mt-1">
-          <span>${r.account_id}</span>
+          <span>${esc(r.account_id)}</span>
           <span>${new Date(r.timestamp).toLocaleString()}</span>
         </div>
       </div>`).join('');

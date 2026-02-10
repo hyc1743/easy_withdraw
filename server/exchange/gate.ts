@@ -4,6 +4,8 @@ import type {
   WithdrawRequest,
   WithdrawResponse,
   DecryptedCreds,
+  CurrencyInfo,
+  ChainInfo,
 } from "./types.js";
 
 const BASE_URL = "https://api.gateio.ws";
@@ -111,5 +113,62 @@ export class GateAdapter implements ExchangeAdapter {
       message: "queried",
       raw,
     };
+  }
+
+  async listCurrencies(creds: DecryptedCreds): Promise<CurrencyInfo[]> {
+    const raw = await gateRequest(
+      "GET",
+      "/wallet/withdraw_status",
+      creds,
+    );
+    const items = raw as Array<{
+      currency?: string;
+      name_en?: string;
+      withdraw_fix_on_chains?: Record<string, string>;
+    }>;
+    return items
+      .filter((c) => c.currency && c.withdraw_fix_on_chains && Object.keys(c.withdraw_fix_on_chains).length > 0)
+      .map((c) => ({
+        currency: c.currency!,
+        name_en: c.name_en ?? "",
+        withdraw_disabled: false,
+      }));
+  }
+
+  async listChains(
+    currency: string,
+    creds: DecryptedCreds,
+  ): Promise<ChainInfo[]> {
+    const raw = await gateRequest(
+      "GET",
+      "/wallet/currency_chains",
+      creds,
+      undefined,
+      `currency=${encodeURIComponent(currency)}`,
+    );
+    const items = raw as Array<{
+      chain?: string;
+      name_en?: string;
+      is_withdraw_disabled?: number;
+      is_deposit_disabled?: number;
+      withdraw_fix?: string;
+      withdraw_percent?: string;
+      withdraw_amount_mini?: string;
+      withdraw_eachtime_limit?: string;
+      withdraw_day_limit?: string;
+      decimal?: string;
+    }>;
+    return items.map((c) => ({
+      chain: c.chain ?? "",
+      name_en: c.name_en ?? "",
+      is_withdraw_disabled: c.is_withdraw_disabled === 1,
+      is_deposit_disabled: c.is_deposit_disabled === 1,
+      withdraw_fix: c.withdraw_fix ?? "0",
+      withdraw_percent: c.withdraw_percent ?? "0",
+      withdraw_amount_mini: c.withdraw_amount_mini ?? "0",
+      withdraw_eachtime_limit: c.withdraw_eachtime_limit ?? "0",
+      withdraw_day_limit: c.withdraw_day_limit ?? "0",
+      decimal: Number(c.decimal ?? 8),
+    }));
   }
 }

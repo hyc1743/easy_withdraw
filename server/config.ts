@@ -13,6 +13,20 @@ export interface AccountConfig {
   passphrase_enc: string | null;
 }
 
+export interface AddressEntry {
+  label: string;
+  address: string;
+}
+
+export interface WithdrawTemplate {
+  name: string;
+  account_id: string;
+  asset: string;
+  network: string;
+  address: string;
+  amount: string;
+}
+
 export interface AppConfig {
   version: number;
   security: {
@@ -22,6 +36,8 @@ export interface AppConfig {
     kdf_params: KdfParams;
   } | null;
   accounts: AccountConfig[];
+  address_book: AddressEntry[];
+  templates: WithdrawTemplate[];
   settings: {
     host: string;
     port: number;
@@ -54,6 +70,8 @@ function defaultConfig(): AppConfig {
     version: 1,
     security: null,
     accounts: [],
+    address_book: [],
+    templates: [],
     settings: {
       host: "127.0.0.1",
       port: 4217,
@@ -69,7 +87,10 @@ export function loadConfig(): AppConfig {
     return ensureConfig();
   }
   const raw = fs.readFileSync(CONFIG_FILE, "utf-8");
-  return JSON.parse(raw) as AppConfig;
+  const cfg = JSON.parse(raw) as AppConfig;
+  if (!cfg.address_book) cfg.address_book = [];
+  if (!cfg.templates) cfg.templates = [];
+  return cfg;
 }
 
 export function saveConfig(config: AppConfig): void {
