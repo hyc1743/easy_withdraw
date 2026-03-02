@@ -38,16 +38,22 @@ npm start
 tailscale serve --https=443 off
 ```
 
-2. 用 Tailscale IP 启动服务（你的固定 IP 示例）：
+2. 用本机 Tailscale IP 启动服务（每台设备 IP 不同）：
 
 ```bash
-EW_HOST=100.110.152.37 npm start
+EW_HOST=$(tailscale ip -4 | head -n1) npm start
 ```
 
-3. 在 tailnet 设备访问：
+3. 查询本机 Tailscale IP：
+
+```bash
+tailscale ip -4
+```
+
+4. 在 tailnet 设备访问（将 `<TAILSCALE_IP>` 替换为上一步结果）：
 
 ```text
-http://100.110.152.37:4217
+http://<TAILSCALE_IP>:4217
 ```
 
 ## 使用流程
