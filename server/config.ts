@@ -1,7 +1,10 @@
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 import type { KdfParams } from "./security.js";
+import {
+  getDb,
+  getDataDir,
+  getLegacyConfigPath,
+  getLegacyHistoryPath,
+} from "./db.js";
 
 // --------------- Types ---------------
 
@@ -47,9 +50,9 @@ export interface AppConfig {
 
 // --------------- Paths ---------------
 
-const CONFIG_DIR = path.join(os.homedir(), ".easy_withdraw");
-const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
-const HISTORY_FILE = path.join(CONFIG_DIR, "history.json");
+const CONFIG_DIR = getDataDir();
+const CONFIG_FILE = getLegacyConfigPath();
+const HISTORY_FILE = getLegacyHistoryPath();
 
 export function getConfigDir(): string {
   return CONFIG_DIR;
@@ -63,50 +66,48 @@ export function getHistoryPath(): string {
   return HISTORY_FILE;
 }
 
-// --------------- Default Config ---------------
+// --------------- Read / Write ---------------
 
-function defaultConfig(): AppConfig {
-  return {
+export function loadConfig(): AppConfig {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT value FROM kv_store WHERE key = 'app_config'")
+    .get() as { value: string } | undefined;
+  if (!row) return ensureConfig();
+  const cfg = JSON.parse(row.value) as AppConfig;
+  if (!cfg.address_book) cfg.address_book = [];
+  if (!cfg.templates) cfg.templates = [];
+  if (!cfg.settings.host) cfg.settings.host = "127.0.0.1";
+  return cfg;
+}
+
+export function saveConfig(config: AppConfig): void {
+  const db = getDb();
+  db.prepare(
+    "INSERT INTO kv_store(key, value) VALUES ('app_config', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).run(JSON.stringify(config));
+}
+
+/** Ensure config dir and file exist; returns current config */
+export function ensureConfig(): AppConfig {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT value FROM kv_store WHERE key = 'app_config'")
+    .get() as { value: string } | undefined;
+  if (row) return JSON.parse(row.value) as AppConfig;
+
+  const cfg: AppConfig = {
     version: 1,
     security: null,
     accounts: [],
     address_book: [],
     templates: [],
     settings: {
-      host: "0.0.0.0",
+      host: "127.0.0.1",
       port: 4217,
       session_timeout_min: 15,
     },
   };
-}
-
-// --------------- Read / Write ---------------
-
-export function loadConfig(): AppConfig {
-  if (!fs.existsSync(CONFIG_FILE)) {
-    return ensureConfig();
-  }
-  const raw = fs.readFileSync(CONFIG_FILE, "utf-8");
-  const cfg = JSON.parse(raw) as AppConfig;
-  if (!cfg.address_book) cfg.address_book = [];
-  if (!cfg.templates) cfg.templates = [];
+  saveConfig(cfg);
   return cfg;
-}
-
-export function saveConfig(config: AppConfig): void {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  const tmp = CONFIG_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(config, null, 2), "utf-8");
-  fs.renameSync(tmp, CONFIG_FILE);
-}
-
-/** Ensure config dir and file exist; returns current config */
-export function ensureConfig(): AppConfig {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  if (!fs.existsSync(CONFIG_FILE)) {
-    const cfg = defaultConfig();
-    saveConfig(cfg);
-    return cfg;
-  }
-  return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")) as AppConfig;
 }

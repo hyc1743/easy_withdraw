@@ -17,7 +17,7 @@ const config = ensureConfig();
 const { port, session_timeout_min } = config.settings;
 const host =
   process.env.EW_HOST ??
-  (config.settings.host === "127.0.0.1" ? "0.0.0.0" : config.settings.host);
+  (config.settings.host === "0.0.0.0" ? "127.0.0.1" : config.settings.host);
 
 const session = new SessionManager(session_timeout_min);
 const app = express();

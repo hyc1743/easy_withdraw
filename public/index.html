@@ -109,10 +109,13 @@
       <div id="addr-picker" class="hidden bg-gray-700 border border-gray-600 rounded mb-3 max-h-48 overflow-y-auto"></div>
       <input id="w-tag" placeholder="地址标签 / Memo (可选)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
       <div class="flex gap-2 mb-1">
-        <input id="w-amount" placeholder="金额" type="number" step="any" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <input id="w-amount" placeholder="金额" type="number" step="any" oninput="updateFeeEstimateView()" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
         <button onclick="fillMaxAmount()" type="button" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm whitespace-nowrap">Max</button>
       </div>
       <div id="w-balance" class="text-xs text-gray-400 mb-3">可用余额: --</div>
+      <div id="w-fee-est" class="text-xs text-gray-400 mb-3">
+        手续费: -- ｜ 预计到账: --
+      </div>
       <div class="flex gap-3 mb-3">
         <button onclick="doPreview()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预校验</button>
         <button onclick="doExecute()" class="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-2 rounded text-sm">单次提现</button>
@@ -408,6 +411,7 @@ let allChains = [];
 let selectedAsset = '';
 let selectedChain = '';
 let selectedAvailable = '';
+let selectedChainInfo = null;
 
 async function loadAccountSelect() {
   try {
@@ -426,9 +430,12 @@ async function onAccountChange() {
   selectedAsset = '';
   selectedChain = '';
   selectedAvailable = '';
+  selectedChainInfo = null;
   $('w-asset-search').value = '';
   $('w-network-search').value = '';
+  $('w-amount').value = '';
   $('w-balance').textContent = '可用余额: --';
+  $('w-fee-est').textContent = '手续费: -- ｜ 预计到账: --';
   $('w-network-search').disabled = true;
   $('w-network-search').placeholder = '先选择币种';
   if (!accountId) return;
@@ -443,10 +450,37 @@ async function onAccountChange() {
   }
 }
 
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function fmtAmount(v) {
+  if (!Number.isFinite(v)) return '0';
+  return v.toFixed(8).replace(/\.?0+$/, '');
+}
+
 function updateBalanceView() {
   $('w-balance').textContent = selectedAsset
     ? `可用余额: ${selectedAvailable || '0'} ${selectedAsset}`
     : '可用余额: --';
+}
+
+function updateFeeEstimateView() {
+  if (!selectedAsset || !selectedChainInfo) {
+    $('w-fee-est').textContent = '手续费: -- ｜ 预计到账: --';
+    return;
+  }
+
+  const amount = num($('w-amount').value);
+  const fixFee = num(selectedChainInfo.withdraw_fix);
+  const pctFeeRate = num(selectedChainInfo.withdraw_percent) / 100;
+  const pctFee = amount > 0 ? amount * pctFeeRate : 0;
+  const totalFee = fixFee + pctFee;
+  const arrived = Math.max(0, amount - totalFee);
+
+  $('w-fee-est').textContent =
+    `手续费: ${fmtAmount(totalFee)} ${selectedAsset} (固定 ${fmtAmount(fixFee)} + 比例 ${fmtAmount(num(selectedChainInfo.withdraw_percent))}%) ｜ 预计到账: ${fmtAmount(arrived)} ${selectedAsset}`;
 }
 
 async function loadAssetBalance(currency) {
@@ -460,9 +494,11 @@ async function loadAssetBalance(currency) {
     const d = await api('GET', `/currencies/${encodeURIComponent(currency)}/balance?account_id=${encodeURIComponent(accountId)}`);
     selectedAvailable = d.balance?.available || '0';
     updateBalanceView();
+    updateFeeEstimateView();
   } catch (e) {
     selectedAvailable = '';
     updateBalanceView();
+    updateFeeEstimateView();
     toast('余额读取失败: ' + e.message, false);
   }
 }
@@ -476,7 +512,11 @@ function fillMaxAmount() {
     toast('暂无可用余额', false);
     return;
   }
-  $('w-amount').value = selectedAvailable;
+  const available = num(selectedAvailable);
+  const fixFee = num(selectedChainInfo?.withdraw_fix);
+  const maxAmount = Math.max(0, available - fixFee);
+  $('w-amount').value = fmtAmount(maxAmount);
+  updateFeeEstimateView();
 }
 
 function filterCurrencies() {
@@ -506,7 +546,9 @@ function showCurrencyDropdown() {
 async function selectCurrency(currency) {
   selectedAsset = currency;
   selectedAvailable = '';
+  selectedChainInfo = null;
   updateBalanceView();
+  updateFeeEstimateView();
   $('w-asset-search').value = currency;
   $('w-asset-dropdown').classList.add('hidden');
   allChains = [];
@@ -568,8 +610,10 @@ function showNetworkDropdown() {
 
 function selectNetwork(chain) {
   selectedChain = chain;
+  selectedChainInfo = allChains.find(c => c.chain === chain) || null;
   $('w-network-search').value = chain;
   $('w-network-dropdown').classList.add('hidden');
+  updateFeeEstimateView();
 }
 
 function getWithdrawBody() {
