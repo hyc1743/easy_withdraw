@@ -4,8 +4,9 @@
 
 ## 特性
 
-- 默认监听 `0.0.0.0`，可从局域网/外网访问（请自行配置防火墙与访问控制）
+- 默认监听 `127.0.0.1`（localhost）
 - 主密码加密存储交易所密钥（Argon2id + AES-256-GCM）
+- 基于 SQLite 持久化配置、提现历史、定时任务与日志
 - 零前端构建步骤（Tailwind CDN + vanilla JS）
 - 会话空闲 15 分钟自动锁定
 - 目前支持 Gate 交易所，后续可扩展
@@ -23,7 +24,31 @@ npm run dev
 npm start
 ```
 
-启动后访问 `http://<服务器IP>:4217`（本机也可用 `http://127.0.0.1:4217`）。
+启动后访问 `http://127.0.0.1:4217`。
+
+- `EW_HOST`：可覆盖监听地址（默认 `127.0.0.1`）
+
+### Tailscale 直连（不使用 serve）
+
+如果你通过 Tailscale 访问并希望使用 `IP:端口` 方式（不做 `tailscale serve` 端口转发）：
+
+1. 关闭 serve（如已开启）：
+
+```bash
+tailscale serve --https=443 off
+```
+
+2. 用 Tailscale IP 启动服务（你的固定 IP 示例）：
+
+```bash
+EW_HOST=100.110.152.37 npm start
+```
+
+3. 在 tailnet 设备访问：
+
+```text
+http://100.110.152.37:4217
+```
 
 ## 使用流程
 
@@ -33,11 +58,17 @@ npm start
 4. 在「提现」页填写提现信息，先预校验再执行
 5. 在「历史」页查看提现记录
 
+## 定时任务行为
+
+- 定时提现任务由后端执行，关闭浏览器不影响执行。
+- 会话锁定后，已启动的定时提现任务会继续执行（直到完成或手动停止）。
+- 定时任务状态持久化到 SQLite；服务重启后，重新解锁会话后会自动恢复运行中的任务。
+
 ## 安全建议
 
 - 在交易所侧将 API Key 限制为「只允许提现到白名单地址」
 - 使用强主密码
-- 不要将 `~/.easy_withdraw/config.json` 上传到公开仓库
+- 不要将 `~/.easy_withdraw/` 下的数据库与配置文件上传到公开仓库
 
 ## 项目结构
 
@@ -45,7 +76,8 @@ npm start
 server/
   index.ts             # Express 入口
   security.ts          # Argon2id KDF + AES-256-GCM + 会话管理
-  config.ts            # JSON 配置文件读写
+  config.ts            # 应用配置读写（SQLite）
+  db.ts                # SQLite 初始化与旧数据迁移
   middleware.ts         # 会话检查 + 请求日志
   routes/auth.ts       # 认证路由
   routes/accounts.ts   # 账户管理路由
