@@ -52,9 +52,14 @@
       <input id="acct-id" placeholder="账户 ID (如 gate_main)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
       <select id="acct-exchange" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
         <option value="gate">Gate</option>
+        <option value="binance">Binance</option>
+        <option value="okx">OKX</option>
+        <option value="bybit">Bybit</option>
+        <option value="bitget">Bitget</option>
       </select>
       <input id="acct-key" placeholder="API Key" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
       <input id="acct-secret" type="password" placeholder="API Secret" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <input id="acct-passphrase" type="password" placeholder="Passphrase (OKX/Bitget必填)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
       <button onclick="saveAccount()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm w-full">保存</button>
     </div>
     <div id="account-list"></div>
@@ -315,8 +320,9 @@ async function saveAccount() {
       exchange: $('acct-exchange').value,
       api_key: $('acct-key').value,
       api_secret: $('acct-secret').value,
+      passphrase: $('acct-passphrase').value || null,
     });
-    $('acct-id').value = $('acct-key').value = $('acct-secret').value = '';
+    $('acct-id').value = $('acct-key').value = $('acct-secret').value = $('acct-passphrase').value = '';
     $('account-form').classList.add('hidden');
     toast('账户已保存');
     loadAccounts();

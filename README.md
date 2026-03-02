@@ -9,7 +9,7 @@
 - 基于 SQLite 持久化配置、提现历史、定时任务与日志
 - 零前端构建步骤（Tailwind CDN + vanilla JS）
 - 会话空闲 15 分钟自动锁定
-- 目前支持 Gate 交易所，后续可扩展
+- 目前支持 Gate / Binance / OKX / Bybit / Bitget
 
 ## 快速开始
 
@@ -63,7 +63,7 @@ http://<TAILSCALE_IP>:4217
 
 1. 首次访问时设置主密码
 2. 输入主密码解锁会话
-3. 在「账户」页添加交易所 API Key / Secret
+3. 在「账户」页添加交易所 API Key / Secret（OKX、Bitget 还需 Passphrase）
 4. 在「提现」页填写提现信息，先预校验再执行
 5. 在「历史」页查看提现记录
 
@@ -97,6 +97,11 @@ server/
   routes/withdraw.ts   # 提现路由
   exchange/types.ts    # 交易所统一接口
   exchange/gate.ts     # Gate 适配器
+  exchange/binance.ts  # Binance 适配器
+  exchange/okx.ts      # OKX 适配器
+  exchange/bybit.ts    # Bybit 适配器
+  exchange/bitget.ts   # Bitget 适配器
+  exchange/adapters.ts # 交易所适配器注册表
 public/
   index.html           # 单页 UI
 ```

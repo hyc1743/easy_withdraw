@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { encrypt, type SessionManager } from "../security.js";
 import { loadConfig, saveConfig } from "../config.js";
+import { supportedExchanges } from "../exchange/adapters.js";
 
 export function accountRoutes(session: SessionManager): Router {
   const router = Router();
@@ -13,6 +14,14 @@ export function accountRoutes(session: SessionManager): Router {
         ok: false,
         error: "BAD_REQUEST",
         message: "id, exchange, api_key are required",
+      });
+      return;
+    }
+    if (!supportedExchanges.includes(exchange)) {
+      res.status(400).json({
+        ok: false,
+        error: "BAD_REQUEST",
+        message: `Unsupported exchange: ${exchange}`,
       });
       return;
     }

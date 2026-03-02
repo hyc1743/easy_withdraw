@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { Router } from "express";
 import { decrypt, type SessionManager } from "../security.js";
 import { loadConfig } from "../config.js";
-import { GateAdapter } from "../exchange/gate.js";
+import { adapters } from "../exchange/adapters.js";
 import { getDb } from "../db.js";
 import type {
   DecryptedCreds,
@@ -10,10 +10,6 @@ import type {
   WithdrawRequest,
   WithdrawResponse,
 } from "../exchange/types.js";
-
-const adapters: Record<string, ExchangeAdapter> = {
-  gate: new GateAdapter(),
-};
 
 interface HistoryRecord {
   timestamp: string;

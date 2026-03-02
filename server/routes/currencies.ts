@@ -1,12 +1,8 @@
 import { Router } from "express";
 import { decrypt, type SessionManager } from "../security.js";
 import { loadConfig } from "../config.js";
-import { GateAdapter } from "../exchange/gate.js";
-import type { ExchangeAdapter, DecryptedCreds } from "../exchange/types.js";
-
-const adapters: Record<string, ExchangeAdapter> = {
-  gate: new GateAdapter(),
-};
+import { adapters } from "../exchange/adapters.js";
+import type { DecryptedCreds, ExchangeAdapter } from "../exchange/types.js";
 
 function resolveCreds(
   accountId: string,
