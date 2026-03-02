@@ -20,13 +20,16 @@ npm install
 # 开发模式（热重载）
 npm run dev
 
-# 生产模式
+# 启动（交互选择监听方式：localhost / tailscale ip）
 npm start
 ```
 
 启动后访问 `http://127.0.0.1:4217`。
 
-- `EW_HOST`：可覆盖监听地址（默认 `127.0.0.1`）
+- `npm start` 会提示选择监听方式：
+  - `1` localhost（`127.0.0.1`）
+  - `2` tailscale ip（自动检测本机 Tailscale IPv4）
+- 也可通过 `EW_HOST` 直接指定监听地址（会跳过交互）
 
 ### Tailscale 直连（不使用 serve）
 
@@ -38,13 +41,13 @@ npm start
 tailscale serve --https=443 off
 ```
 
-2. 用本机 Tailscale IP 启动服务（每台设备 IP 不同）：
+2. 启动服务并在交互菜单选择 `2`（tailscale ip）：
 
 ```bash
-EW_HOST=$(tailscale ip -4 | head -n1) npm start
+npm start
 ```
 
-3. 查询本机 Tailscale IP：
+3. 查询本机 Tailscale IP（用于确认访问地址）：
 
 ```bash
 tailscale ip -4
@@ -80,6 +83,7 @@ http://<TAILSCALE_IP>:4217
 
 ```
 server/
+  start.ts             # 启动入口（交互选择监听地址）
   index.ts             # Express 入口
   security.ts          # Argon2id KDF + AES-256-GCM + 会话管理
   config.ts            # 应用配置读写（SQLite）

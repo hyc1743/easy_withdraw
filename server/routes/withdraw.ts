@@ -141,7 +141,7 @@ function persistScheduleJob(job: ScheduleJobView): void {
 }
 
 function loadScheduleLogs(jobId: string, limit: number = 200): ScheduleLogRecord[] {
-  return db
+  const rows = db
     .prepare(
       `SELECT timestamp, ok, message
       FROM schedule_logs
@@ -149,12 +149,12 @@ function loadScheduleLogs(jobId: string, limit: number = 200): ScheduleLogRecord
       ORDER BY id DESC
       LIMIT ?`,
     )
-    .all(jobId, limit)
-    .map((row) => ({
-      timestamp: String((row as { timestamp: string }).timestamp),
-      ok: Number((row as { ok: number }).ok) === 1,
-      message: String((row as { message: string }).message),
-    }));
+    .all(jobId, limit) as Array<{ timestamp: string; ok: number; message: string }>;
+  return rows.map((row) => ({
+    timestamp: row.timestamp,
+    ok: row.ok === 1,
+    message: row.message,
+  }));
 }
 
 function appendScheduleLog(jobId: string, ok: boolean, message: string): void {
