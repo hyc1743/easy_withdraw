@@ -41,6 +41,13 @@ export interface ChainInfo {
   decimal: number;
 }
 
+export interface AssetBalance {
+  currency: string;
+  available: string;
+  locked: string;
+  total: string;
+}
+
 export interface ExchangeAdapter {
   validateRequest(req: WithdrawRequest): Promise<void>;
   withdraw(
@@ -53,4 +60,5 @@ export interface ExchangeAdapter {
   ): Promise<WithdrawResponse>;
   listCurrencies(creds: DecryptedCreds): Promise<CurrencyInfo[]>;
   listChains(currency: string, creds: DecryptedCreds): Promise<ChainInfo[]>;
+  getBalance(currency: string, creds: DecryptedCreds): Promise<AssetBalance>;
 }

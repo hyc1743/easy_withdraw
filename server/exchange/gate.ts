@@ -6,10 +6,21 @@ import type {
   DecryptedCreds,
   CurrencyInfo,
   ChainInfo,
+  AssetBalance,
 } from "./types.js";
 
 const BASE_URL = "https://api.gateio.ws";
 const API_PREFIX = "/api/v4";
+const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_RETRIES = 2;
+
+function shouldRetryStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function sign(
   method: string,
@@ -39,27 +50,63 @@ async function gateRequest(
 ): Promise<unknown> {
   const path = API_PREFIX + endpoint;
   const bodyStr = body ? JSON.stringify(body) : "";
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const signature = sign(method, path, query, bodyStr, creds.api_secret, timestamp);
-
   const url = BASE_URL + path + (query ? `?${query}` : "");
-  const resp = await fetch(url, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      KEY: creds.api_key,
-      SIGN: signature,
-      Timestamp: timestamp,
-    },
-    body: bodyStr || undefined,
-  });
 
-  const data = await resp.json();
-  if (!resp.ok) {
-    const msg = (data as { message?: string }).message ?? resp.statusText;
-    throw new Error(`Gate API error ${resp.status}: ${msg}`);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = sign(
+      method,
+      path,
+      query,
+      bodyStr,
+      creds.api_secret,
+      timestamp,
+    );
+
+    try {
+      const resp = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          KEY: creds.api_key,
+          SIGN: signature,
+          Timestamp: timestamp,
+        },
+        body: bodyStr || undefined,
+        signal: controller.signal,
+      });
+
+      const text = await resp.text();
+      const data = text ? (JSON.parse(text) as unknown) : {};
+
+      if (!resp.ok) {
+        const msg = (data as { message?: string }).message ?? resp.statusText;
+        if (attempt < MAX_RETRIES && shouldRetryStatus(resp.status)) {
+          await sleep(300 * (attempt + 1));
+          continue;
+        }
+        throw new Error(`Gate API error ${resp.status}: ${msg}`);
+      }
+      return data;
+    } catch (e: unknown) {
+      const isAbort = e instanceof Error && e.name === "AbortError";
+      if (attempt < MAX_RETRIES && isAbort) {
+        await sleep(300 * (attempt + 1));
+        continue;
+      }
+      if (attempt < MAX_RETRIES && e instanceof TypeError) {
+        await sleep(300 * (attempt + 1));
+        continue;
+      }
+      throw e;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
-  return data;
+
+  throw new Error("Gate API request failed");
 }
 
 export class GateAdapter implements ExchangeAdapter {
@@ -170,5 +217,30 @@ export class GateAdapter implements ExchangeAdapter {
       withdraw_day_limit: c.withdraw_day_limit ?? "0",
       decimal: Number(c.decimal ?? 8),
     }));
+  }
+
+  async getBalance(currency: string, creds: DecryptedCreds): Promise<AssetBalance> {
+    const raw = await gateRequest(
+      "GET",
+      "/spot/accounts",
+      creds,
+      undefined,
+      `currency=${encodeURIComponent(currency)}`,
+    );
+    const list = raw as Array<{
+      currency?: string;
+      available?: string;
+      locked?: string;
+    }>;
+    const row = list.find((x) => (x.currency ?? "").toUpperCase() === currency.toUpperCase());
+    const available = row?.available ?? "0";
+    const locked = row?.locked ?? "0";
+    const total = (Number(available) + Number(locked)).toString();
+    return {
+      currency: currency.toUpperCase(),
+      available,
+      locked,
+      total,
+    };
   }
 }

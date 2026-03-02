@@ -111,6 +111,7 @@ public/
 | DELETE | `/api/accounts/:id` | 删除账户 |
 | GET | `/api/currencies` | 列出币种 |
 | GET | `/api/currencies/:currency/chains` | 查询链列表 |
+| GET | `/api/currencies/:currency/balance` | 查询币种余额 |
 | GET | `/api/addresses` | 列出地址簿 |
 | POST | `/api/addresses` | 新增/更新地址 |
 | DELETE | `/api/addresses/:label` | 删除地址 |

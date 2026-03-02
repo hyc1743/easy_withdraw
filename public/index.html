@@ -108,7 +108,11 @@
       </div>
       <div id="addr-picker" class="hidden bg-gray-700 border border-gray-600 rounded mb-3 max-h-48 overflow-y-auto"></div>
       <input id="w-tag" placeholder="地址标签 / Memo (可选)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
-      <input id="w-amount" placeholder="金额" type="number" step="any" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <div class="flex gap-2 mb-1">
+        <input id="w-amount" placeholder="金额" type="number" step="any" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <button onclick="fillMaxAmount()" type="button" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm whitespace-nowrap">Max</button>
+      </div>
+      <div id="w-balance" class="text-xs text-gray-400 mb-3">可用余额: --</div>
       <div class="flex gap-3 mb-3">
         <button onclick="doPreview()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预校验</button>
         <button onclick="doExecute()" class="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-2 rounded text-sm">单次提现</button>
@@ -184,6 +188,7 @@ const $ = (id) => document.getElementById(id);
 let historyOffset = 0;
 let _schPollTimer = null;
 let _schCurrentJobId = null;
+let _isUnlocked = false;
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
@@ -193,7 +198,13 @@ async function api(method, path, body) {
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch('/api' + path, opts);
   const data = await res.json();
-  if (!res.ok && !data.ok) throw new Error(data.message || res.statusText);
+  if (res.status === 401) {
+    _isUnlocked = false;
+    stopSchedulePolling();
+    syncUnlockedUI();
+    showView('unlock');
+  }
+  if (!res.ok || data.ok === false) throw new Error(data.message || res.statusText);
   return data;
 }
 
@@ -204,8 +215,21 @@ function toast(msg, ok = true) {
   setTimeout(() => el.className = 'hidden', 3000);
 }
 
+function syncUnlockedUI() {
+  const navs = ['accounts', 'addressbook', 'withdraw', 'history'];
+  navs.forEach((name) => {
+    const btn = $('nav-' + name);
+    if (!btn) return;
+    btn.classList.toggle('hidden', !_isUnlocked);
+  });
+  $('btn-lock').classList.toggle('hidden', !_isUnlocked);
+}
+
 // ---- View switching ----
 function showView(name) {
+  if (!_isUnlocked && name !== 'unlock') {
+    name = 'unlock';
+  }
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   $('view-' + name).classList.add('active');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-white'));
@@ -223,12 +247,16 @@ function showView(name) {
 // ---- Auth ----
 async function checkStatus() {
   const s = await api('GET', '/auth/status');
+  _isUnlocked = !!s.unlocked;
+  syncUnlockedUI();
   if (s.unlocked) {
-    $('btn-lock').classList.remove('hidden');
     showView('withdraw');
   } else if (!s.initialized) {
     $('unlock-title').textContent = '设置主密码';
     $('btn-auth').textContent = '初始化';
+    showView('unlock');
+  } else {
+    showView('unlock');
   }
 }
 
@@ -243,7 +271,8 @@ async function doAuth() {
     }
     await api('POST', '/auth/unlock', { masterPassword: pw });
     $('master-pw').value = '';
-    $('btn-lock').classList.remove('hidden');
+    _isUnlocked = true;
+    syncUnlockedUI();
     toast('已解锁');
     showView('withdraw');
   } catch (e) { toast(e.message, false); }
@@ -251,8 +280,9 @@ async function doAuth() {
 
 async function doLock() {
   await api('POST', '/auth/lock');
-  $('btn-lock').classList.add('hidden');
+  _isUnlocked = false;
   stopSchedulePolling();
+  syncUnlockedUI();
   showView('unlock');
   toast('已锁定');
 }
@@ -377,6 +407,7 @@ let allCurrencies = [];
 let allChains = [];
 let selectedAsset = '';
 let selectedChain = '';
+let selectedAvailable = '';
 
 async function loadAccountSelect() {
   try {
@@ -394,8 +425,10 @@ async function onAccountChange() {
   allChains = [];
   selectedAsset = '';
   selectedChain = '';
+  selectedAvailable = '';
   $('w-asset-search').value = '';
   $('w-network-search').value = '';
+  $('w-balance').textContent = '可用余额: --';
   $('w-network-search').disabled = true;
   $('w-network-search').placeholder = '先选择币种';
   if (!accountId) return;
@@ -408,6 +441,42 @@ async function onAccountChange() {
     toast(e.message, false);
     $('w-asset-search').placeholder = '加载失败，请重试';
   }
+}
+
+function updateBalanceView() {
+  $('w-balance').textContent = selectedAsset
+    ? `可用余额: ${selectedAvailable || '0'} ${selectedAsset}`
+    : '可用余额: --';
+}
+
+async function loadAssetBalance(currency) {
+  const accountId = $('w-account').value;
+  if (!accountId || !currency) {
+    selectedAvailable = '';
+    updateBalanceView();
+    return;
+  }
+  try {
+    const d = await api('GET', `/currencies/${encodeURIComponent(currency)}/balance?account_id=${encodeURIComponent(accountId)}`);
+    selectedAvailable = d.balance?.available || '0';
+    updateBalanceView();
+  } catch (e) {
+    selectedAvailable = '';
+    updateBalanceView();
+    toast('余额读取失败: ' + e.message, false);
+  }
+}
+
+function fillMaxAmount() {
+  if (!selectedAsset) {
+    toast('请先选择币种', false);
+    return;
+  }
+  if (!selectedAvailable) {
+    toast('暂无可用余额', false);
+    return;
+  }
+  $('w-amount').value = selectedAvailable;
 }
 
 function filterCurrencies() {
@@ -436,6 +505,8 @@ function showCurrencyDropdown() {
 
 async function selectCurrency(currency) {
   selectedAsset = currency;
+  selectedAvailable = '';
+  updateBalanceView();
   $('w-asset-search').value = currency;
   $('w-asset-dropdown').classList.add('hidden');
   allChains = [];
@@ -445,6 +516,7 @@ async function selectCurrency(currency) {
   $('w-network-search').placeholder = '加载网络中...';
   const accountId = $('w-account').value;
   try {
+    await loadAssetBalance(currency);
     const d = await api('GET', `/currencies/${encodeURIComponent(currency)}/chains?account_id=${encodeURIComponent(accountId)}`);
     allChains = d.chains.filter(c => !c.is_withdraw_disabled);
     if (!allChains.length) {
@@ -750,6 +822,7 @@ async function loadHistory(offset = 0) {
 
 // ---- Init ----
 $('master-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth(); });
+syncUnlockedUI();
 checkStatus();
 </script>
 </body>

@@ -75,5 +75,26 @@ export function currencyRoutes(session: SessionManager): Router {
     }
   });
 
+  // GET /api/currencies/:currency/balance?account_id=xxx
+  router.get("/:currency/balance", async (req, res) => {
+    try {
+      const accountId = req.query.account_id as string;
+      if (!accountId) {
+        res.status(400).json({
+          ok: false,
+          error: "BAD_REQUEST",
+          message: "account_id query param required",
+        });
+        return;
+      }
+      const { adapter, creds } = resolveCreds(accountId, session);
+      const balance = await adapter.getBalance(req.params.currency, creds);
+      res.json({ ok: true, balance });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ ok: false, error: "EXCHANGE_ERROR", message: msg });
+    }
+  });
+
   return router;
 }
