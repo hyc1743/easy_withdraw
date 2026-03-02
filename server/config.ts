@@ -73,7 +73,7 @@ function defaultConfig(): AppConfig {
     address_book: [],
     templates: [],
     settings: {
-      host: "127.0.0.1",
+      host: "0.0.0.0",
       port: 4217,
       session_timeout_min: 15,
     },

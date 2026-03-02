@@ -14,7 +14,10 @@ import { templateRoutes } from "./routes/templates.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const config = ensureConfig();
-const { host, port, session_timeout_min } = config.settings;
+const { port, session_timeout_min } = config.settings;
+const host =
+  process.env.EW_HOST ??
+  (config.settings.host === "127.0.0.1" ? "0.0.0.0" : config.settings.host);
 
 const session = new SessionManager(session_timeout_min);
 const app = express();

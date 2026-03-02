@@ -4,7 +4,7 @@
 
 ## 特性
 
-- 仅监听 `127.0.0.1`，不对外网开放
+- 默认监听 `0.0.0.0`，可从局域网/外网访问（请自行配置防火墙与访问控制）
 - 主密码加密存储交易所密钥（Argon2id + AES-256-GCM）
 - 零前端构建步骤（Tailwind CDN + vanilla JS）
 - 会话空闲 15 分钟自动锁定
@@ -23,7 +23,7 @@ npm run dev
 npm start
 ```
 
-启动后访问 `http://127.0.0.1:4217`。
+启动后访问 `http://<服务器IP>:4217`（本机也可用 `http://127.0.0.1:4217`）。
 
 ## 使用流程
 
@@ -81,6 +81,10 @@ public/
 | DELETE | `/api/templates/:name` | 删除模板 |
 | POST | `/api/withdraw/preview` | 预校验 |
 | POST | `/api/withdraw/execute` | 执行提现 |
+| POST | `/api/withdraw/schedule/start` | 启动后端定时提现 |
+| POST | `/api/withdraw/schedule/:id/stop` | 停止定时提现 |
+| GET | `/api/withdraw/schedule/active` | 获取当前运行任务 |
+| GET | `/api/withdraw/schedule/:id` | 查询指定定时任务 |
 | GET | `/api/withdraw/history` | 提现历史 |
 | GET | `/api/withdraw/:id` | 查询提现状态 |
 

@@ -182,6 +182,8 @@
 <script>
 const $ = (id) => document.getElementById(id);
 let historyOffset = 0;
+let _schPollTimer = null;
+let _schCurrentJobId = null;
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
@@ -211,7 +213,10 @@ function showView(name) {
   if (nb) nb.classList.add('text-white');
   if (name === 'accounts') loadAccounts();
   if (name === 'addressbook') loadAddresses();
-  if (name === 'withdraw') loadAccountSelect();
+  if (name === 'withdraw') {
+    loadAccountSelect();
+    syncSchedule();
+  }
   if (name === 'history') loadHistory(0);
 }
 
@@ -247,6 +252,7 @@ async function doAuth() {
 async function doLock() {
   await api('POST', '/auth/lock');
   $('btn-lock').classList.add('hidden');
+  stopSchedulePolling();
   showView('unlock');
   toast('已锁定');
 }
@@ -590,12 +596,6 @@ async function deleteTemplate() {
 }
 
 // ---- Scheduled withdraw ----
-let _schTimer = null;
-let _schDone = 0;
-let _schTotal = 0;
-let _schCountdown = null;
-let _schNextTime = 0;
-
 function toggleSchedulePanel() {
   $('schedule-panel').classList.toggle('hidden');
 }
@@ -605,95 +605,122 @@ function showProgressPanel() {
 }
 
 function addProgressLog(msg, ok = true) {
-  const el = $('prog-log');
   const time = new Date().toLocaleTimeString();
   const color = ok ? 'text-green-400' : 'text-red-400';
-  el.innerHTML = `<div class="${color}">[${esc(time)}] ${esc(msg)}</div>` + el.innerHTML;
-}
-
-function updateProgressSummary() {
-  const pct = _schTotal > 0 ? Math.round((_schDone / _schTotal) * 100) : 0;
-  $('prog-bar').style.width = pct + '%';
-  $('prog-round').textContent = `${_schDone} / ${_schTotal}`;
-}
-
-function startCountdown(intervalSec) {
-  _schNextTime = Date.now() + intervalSec * 1000;
-  if (_schCountdown) clearInterval(_schCountdown);
-  _schCountdown = setInterval(() => {
-    const remain = Math.max(0, Math.ceil((_schNextTime - Date.now()) / 1000));
-    $('prog-next').textContent = remain > 0 ? remain + 's' : '--';
-    if (remain <= 0 && _schCountdown) { clearInterval(_schCountdown); _schCountdown = null; }
-  }, 500);
+  const row = `<div class="${color}">[${esc(time)}] ${esc(msg)}</div>`;
+  $('prog-log').innerHTML = row + $('prog-log').innerHTML;
 }
 
 async function startSchedule() {
   const interval = parseInt($('sch-interval').value) || 60;
   const count = parseInt($('sch-count').value) || 1;
-  _schDone = 0;
-  _schTotal = count;
-  $('btn-sch-start').classList.add('hidden');
-  $('btn-sch-stop').classList.remove('hidden');
-  $('sch-status').classList.remove('hidden');
-  updateSchStatus();
-  // Show and init progress panel
-  showProgressPanel();
-  $('prog-log').innerHTML = '';
-  $('prog-state').textContent = '运行中';
-  $('prog-state').className = 'text-yellow-400';
-  $('prog-interval').textContent = interval + 's';
-  $('prog-round').textContent = `0 / ${count}`;
-  $('prog-next').textContent = '--';
-  $('prog-bar').style.width = '0%';
-  addProgressLog(`定时提现开始: ${count} 次, 间隔 ${interval}s`, true);
-  await doOneScheduled();
-  if (_schDone >= _schTotal) { stopSchedule(); return; }
-  startCountdown(interval);
-  _schTimer = setInterval(async () => {
-    await doOneScheduled();
-    if (_schDone >= _schTotal) { stopSchedule(); return; }
-    startCountdown(interval);
-  }, interval * 1000);
-}
-
-async function doOneScheduled() {
   try {
-    const r = await api('POST', '/withdraw/execute', getWithdrawBody());
-    _schDone++;
-    updateSchStatus(`第 ${_schDone}/${_schTotal} 次成功 ID: ${r.withdraw_id}`);
-    updateProgressSummary();
-    addProgressLog(`第${_schDone}次成功 - ID: ${r.withdraw_id}`, true);
+    const r = await api('POST', '/withdraw/schedule/start', {
+      interval_sec: interval,
+      count,
+      withdraw: getWithdrawBody(),
+    });
+    _schCurrentJobId = r.job.id;
+    renderScheduleJob(r.job);
+    startSchedulePolling();
+    toast(`定时提现已启动: ${count} 次 / ${interval}s`);
   } catch (e) {
-    _schDone++;
-    updateSchStatus(`第 ${_schDone}/${_schTotal} 次失败: ${e.message}`);
-    updateProgressSummary();
-    addProgressLog(`第${_schDone}次失败: ${e.message}`, false);
+    toast(e.message, false);
   }
 }
 
-function updateSchStatus(msg) {
-  const el = $('sch-status');
-  const base = `进度: ${_schDone}/${_schTotal}`;
-  el.innerHTML = msg ? `${base}<br><span class="text-gray-400 text-xs">${esc(msg)}</span>` : base;
+function setScheduleButtons(isRunning) {
+  $('btn-sch-start').classList.toggle('hidden', isRunning);
+  $('btn-sch-stop').classList.toggle('hidden', !isRunning);
 }
 
-function stopSchedule() {
-  if (_schTimer) { clearInterval(_schTimer); _schTimer = null; }
-  if (_schCountdown) { clearInterval(_schCountdown); _schCountdown = null; }
-  $('btn-sch-start').classList.remove('hidden');
-  $('btn-sch-stop').classList.add('hidden');
-  $('prog-next').textContent = '--';
-  if (_schDone >= _schTotal) {
-    $('prog-state').textContent = '已完成';
-    $('prog-state').className = 'text-green-400';
-    addProgressLog(`全部完成: ${_schDone}/${_schTotal}`, true);
-  } else {
-    $('prog-state').textContent = '已停止';
-    $('prog-state').className = 'text-red-400';
-    addProgressLog(`手动停止: 已完成 ${_schDone}/${_schTotal}`, false);
+function formatState(state) {
+  if (state === 'running') return ['运行中', 'text-yellow-400'];
+  if (state === 'completed') return ['已完成', 'text-green-400'];
+  return ['已停止', 'text-red-400'];
+}
+
+function renderScheduleJob(job) {
+  if (!job) return;
+  showProgressPanel();
+  const [stateText, stateClass] = formatState(job.state);
+  const pct = job.total_count > 0 ? Math.round((job.done_count / job.total_count) * 100) : 0;
+  const remainSec = job.next_run_at
+    ? Math.max(0, Math.ceil((new Date(job.next_run_at).getTime() - Date.now()) / 1000))
+    : null;
+
+  $('prog-state').textContent = stateText;
+  $('prog-state').className = stateClass;
+  $('prog-interval').textContent = `${job.interval_sec}s`;
+  $('prog-round').textContent = `${job.done_count} / ${job.total_count}`;
+  $('prog-next').textContent = remainSec !== null ? `${remainSec}s` : '--';
+  $('prog-bar').style.width = `${pct}%`;
+
+  const logs = job.logs || [];
+  $('prog-log').innerHTML = logs.map((l) => {
+    const color = l.ok ? 'text-green-400' : 'text-red-400';
+    const time = new Date(l.timestamp).toLocaleTimeString();
+    return `<div class="${color}">[${esc(time)}] ${esc(l.message)}</div>`;
+  }).join('');
+
+  $('sch-status').classList.remove('hidden');
+  $('sch-status').innerHTML = `进度: ${job.done_count}/${job.total_count}`;
+  setScheduleButtons(job.state === 'running');
+}
+
+async function syncSchedule() {
+  try {
+    const active = await api('GET', '/withdraw/schedule/active');
+    if (active.job) {
+      _schCurrentJobId = active.job.id;
+      renderScheduleJob(active.job);
+      startSchedulePolling();
+      return;
+    }
+
+    if (_schCurrentJobId) {
+      const d = await api('GET', `/withdraw/schedule/${encodeURIComponent(_schCurrentJobId)}`);
+      renderScheduleJob(d.job);
+      if (d.job.state !== 'running') stopSchedulePolling();
+      return;
+    }
+
+    setScheduleButtons(false);
+  } catch (e) {
+    stopSchedulePolling();
   }
-  if (_schDone > 0) {
-    $('sch-status').innerHTML = `已完成 ${_schDone}/${_schTotal} 次提现`;
+}
+
+function startSchedulePolling() {
+  if (_schPollTimer) return;
+  _schPollTimer = setInterval(() => {
+    void syncSchedule();
+  }, 1000);
+}
+
+function stopSchedulePolling() {
+  if (_schPollTimer) {
+    clearInterval(_schPollTimer);
+    _schPollTimer = null;
+  }
+}
+
+async function stopSchedule() {
+  try {
+    if (!_schCurrentJobId) {
+      const active = await api('GET', '/withdraw/schedule/active');
+      if (active.job) _schCurrentJobId = active.job.id;
+    }
+    if (!_schCurrentJobId) {
+      toast('当前没有运行中的定时任务', false);
+      return;
+    }
+    const d = await api('POST', `/withdraw/schedule/${encodeURIComponent(_schCurrentJobId)}/stop`);
+    renderScheduleJob(d.job);
+    stopSchedulePolling();
+    toast('定时提现已停止');
+  } catch (e) {
+    toast(e.message, false);
   }
 }
 
