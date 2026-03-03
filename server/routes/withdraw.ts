@@ -551,6 +551,86 @@ export function withdrawRoutes(session: SessionManager): Router {
     }
   });
 
+  // POST /api/withdraw/schedule/:id/resume
+  router.post("/schedule/:id/resume", (req, res) => {
+    try {
+      ensureRuntimeActiveJob(session);
+
+      if (activeScheduleJobId && activeScheduleJobId !== req.params.id) {
+        res.status(409).json({
+          ok: false,
+          error: "SCHEDULE_RUNNING",
+          message: "已有其他定时任务在运行，请先停止",
+        });
+        return;
+      }
+
+      const runtime = scheduleJobs.get(req.params.id);
+      if (runtime) {
+        if (runtime.state === "completed") {
+          res.status(400).json({
+            ok: false,
+            error: "BAD_REQUEST",
+            message: "已完成任务不能继续",
+          });
+          return;
+        }
+        if (runtime.state !== "running") {
+          runtime.state = "running";
+          runtime.next_run_at = null;
+          runtime.updated_at = new Date().toISOString();
+          addScheduleLog(
+            runtime,
+            true,
+            `手动继续: 当前进度 ${runtime.done_count}/${runtime.total_count}`,
+          );
+          persistScheduleJob(toJobView(runtime));
+          activeScheduleJobId = runtime.id;
+          void runScheduleJob(runtime.id);
+        }
+        res.json({ ok: true, job: toJobView(runtime) });
+        return;
+      }
+
+      const persisted = loadScheduleJob(req.params.id);
+      if (!persisted) {
+        res.status(404).json({
+          ok: false,
+          error: "NOT_FOUND",
+          message: "Schedule job not found",
+        });
+        return;
+      }
+      if (persisted.state === "completed") {
+        res.status(400).json({
+          ok: false,
+          error: "BAD_REQUEST",
+          message: "已完成任务不能继续",
+        });
+        return;
+      }
+
+      const hydrated = hydrateRuntimeJob(session, persisted);
+      hydrated.state = "running";
+      hydrated.next_run_at = null;
+      hydrated.updated_at = new Date().toISOString();
+      addScheduleLog(
+        hydrated,
+        true,
+        `手动继续: 当前进度 ${hydrated.done_count}/${hydrated.total_count}`,
+      );
+      scheduleJobs.set(hydrated.id, hydrated);
+      activeScheduleJobId = hydrated.id;
+      persistScheduleJob(toJobView(hydrated));
+      void runScheduleJob(hydrated.id);
+
+      res.json({ ok: true, job: toJobView(hydrated) });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message: msg });
+    }
+  });
+
   // GET /api/withdraw/schedule/active
   router.get("/schedule/active", (_req, res) => {
     try {

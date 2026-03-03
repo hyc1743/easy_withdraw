@@ -13,3 +13,6 @@ Thumbs.db
 # env
 .env
 .env.*
+
+# local agent instructions
+AGENTS.md

@@ -13,6 +13,7 @@ const BASE_URL = "https://api.gateio.ws";
 const API_PREFIX = "/api/v4";
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RETRIES = 2;
+const GATE_WITHDRAW_ORDER_ID_MAX_LEN = 32;
 
 function shouldRetryStatus(status: number): boolean {
   return status === 429 || status >= 500;
@@ -130,7 +131,9 @@ export class GateAdapter implements ExchangeAdapter {
       amount: req.amount,
     };
     if (req.address_tag) payload.memo = req.address_tag;
-    if (req.client_withdraw_id) payload.withdraw_order_id = req.client_withdraw_id;
+    if (req.client_withdraw_id) {
+      payload.withdraw_order_id = normalizeGateWithdrawOrderId(req.client_withdraw_id);
+    }
 
     const raw = await gateRequest("POST", "/withdrawals", creds, payload);
     const data = raw as { id?: string; status?: string };
@@ -243,4 +246,16 @@ export class GateAdapter implements ExchangeAdapter {
       total,
     };
   }
+}
+
+function normalizeGateWithdrawOrderId(raw: string): string {
+  const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, "");
+  if (cleaned.length > 0 && cleaned.length <= GATE_WITHDRAW_ORDER_ID_MAX_LEN) {
+    return cleaned;
+  }
+  return crypto
+    .createHash("sha256")
+    .update(raw)
+    .digest("hex")
+    .slice(0, GATE_WITHDRAW_ORDER_ID_MAX_LEN);
 }

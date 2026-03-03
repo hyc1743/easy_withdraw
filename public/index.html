@@ -24,7 +24,7 @@
   </div>
 </nav>
 
-<main class="max-w-6xl mx-auto p-6 flex gap-6">
+<main class="max-w-6xl mx-auto p-4 md:p-6 flex flex-col lg:flex-row gap-4 lg:gap-6">
   <!-- Toast -->
   <div id="toast" class="hidden fixed top-4 right-4 px-4 py-2 rounded shadow-lg text-sm z-50"></div>
 
@@ -121,7 +121,7 @@
       <div id="w-fee-est" class="text-xs text-gray-400 mb-3">
         手续费: -- ｜ 预计到账: --
       </div>
-      <div class="flex gap-3 mb-3">
+      <div class="flex flex-col sm:flex-row gap-3 mb-3">
         <button onclick="doPreview()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预校验</button>
         <button onclick="doExecute()" class="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-2 rounded text-sm">单次提现</button>
         <button onclick="toggleSchedulePanel()" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2 rounded text-sm">定时提现</button>
@@ -160,8 +160,8 @@
   </div>
 
   <!-- Right column: progress panel -->
-  <div id="progress-panel" class="w-80 shrink-0 hidden">
-    <div class="bg-gray-800 rounded-lg p-4 sticky top-6">
+  <div id="progress-panel" class="w-full lg:w-80 shrink-0 hidden">
+    <div class="bg-gray-800 rounded-lg p-4 lg:sticky lg:top-6">
       <h3 class="text-sm font-semibold mb-3 text-gray-300">提现进度</h3>
       <div id="prog-summary" class="text-sm mb-3">
         <div class="flex justify-between mb-1">
@@ -185,6 +185,11 @@
       <div class="w-full bg-gray-700 rounded-full h-2 mb-3">
         <div id="prog-bar" class="bg-blue-500 h-2 rounded-full transition-all" style="width:0%"></div>
       </div>
+      <div class="flex gap-2 mb-3">
+        <button onclick="stopSchedule()" id="btn-prog-stop" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm hidden">停止提现</button>
+        <button onclick="resumeSchedule()" id="btn-prog-resume" class="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded text-sm hidden">继续提现</button>
+      </div>
+      <button onclick="terminateScheduleTask()" id="btn-prog-terminate" class="w-full bg-gray-700 hover:bg-gray-600 text-white py-2 rounded text-sm mb-3 hidden">终止当前提现任务</button>
       <h4 class="text-xs font-semibold text-gray-400 mb-2">执行日志</h4>
       <div id="prog-log" class="space-y-1 max-h-96 overflow-y-auto text-xs"></div>
     </div>
@@ -756,6 +761,32 @@ function setScheduleButtons(isRunning) {
   $('btn-sch-stop').classList.toggle('hidden', !isRunning);
 }
 
+function setProgressButtons(job) {
+  const isRunning = !!job && job.state === 'running';
+  const canResume = !!job && (job.state === 'running' || job.state === 'stopped');
+  const hasJob = !!job;
+  $('btn-prog-stop').classList.toggle('hidden', !isRunning);
+  $('btn-prog-resume').classList.toggle('hidden', !canResume);
+  $('btn-prog-terminate').classList.toggle('hidden', !hasJob);
+}
+
+function clearProgressPanel() {
+  _schCurrentJobId = null;
+  stopSchedulePolling();
+  $('progress-panel').classList.add('hidden');
+  $('prog-state').textContent = '--';
+  $('prog-state').className = 'text-yellow-400';
+  $('prog-interval').textContent = '--';
+  $('prog-round').textContent = '--';
+  $('prog-next').textContent = '--';
+  $('prog-bar').style.width = '0%';
+  $('prog-log').innerHTML = '';
+  $('sch-status').classList.add('hidden');
+  $('sch-status').innerHTML = '';
+  setScheduleButtons(false);
+  setProgressButtons(null);
+}
+
 function formatState(state) {
   if (state === 'running') return ['运行中', 'text-yellow-400'];
   if (state === 'completed') return ['已完成', 'text-green-400'];
@@ -788,6 +819,7 @@ function renderScheduleJob(job) {
   $('sch-status').classList.remove('hidden');
   $('sch-status').innerHTML = `进度: ${job.done_count}/${job.total_count}`;
   setScheduleButtons(job.state === 'running');
+  setProgressButtons(job);
 }
 
 async function syncSchedule() {
@@ -808,6 +840,7 @@ async function syncSchedule() {
     }
 
     setScheduleButtons(false);
+    setProgressButtons(null);
   } catch (e) {
     stopSchedulePolling();
   }
@@ -841,6 +874,52 @@ async function stopSchedule() {
     renderScheduleJob(d.job);
     stopSchedulePolling();
     toast('定时提现已停止');
+  } catch (e) {
+    toast(e.message, false);
+  }
+}
+
+async function resumeSchedule() {
+  try {
+    if (!_schCurrentJobId) {
+      const active = await api('GET', '/withdraw/schedule/active');
+      if (active.job) _schCurrentJobId = active.job.id;
+    }
+    if (!_schCurrentJobId) {
+      toast('没有可继续的定时任务', false);
+      return;
+    }
+    const d = await api('POST', `/withdraw/schedule/${encodeURIComponent(_schCurrentJobId)}/resume`);
+    renderScheduleJob(d.job);
+    startSchedulePolling();
+    toast('定时提现已继续');
+  } catch (e) {
+    toast(e.message, false);
+  }
+}
+
+async function terminateScheduleTask() {
+  try {
+    if (!_schCurrentJobId) {
+      clearProgressPanel();
+      toast('已清空当前提现进度');
+      return;
+    }
+
+    let state = null;
+    try {
+      const d = await api('GET', `/withdraw/schedule/${encodeURIComponent(_schCurrentJobId)}`);
+      state = d.job?.state || null;
+    } catch (e) {
+      state = null;
+    }
+
+    if (state === 'running') {
+      await api('POST', `/withdraw/schedule/${encodeURIComponent(_schCurrentJobId)}/stop`);
+    }
+
+    clearProgressPanel();
+    toast('当前提现任务已终止，进度面板已清空');
   } catch (e) {
     toast(e.message, false);
   }
