@@ -107,6 +107,7 @@
           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
         <div id="w-network-dropdown" class="hidden absolute z-10 w-full mt-1 bg-gray-700 border border-gray-600 rounded max-h-48 overflow-y-auto"></div>
       </div>
+      <div id="w-network-status" class="hidden text-xs text-amber-400 mb-3"></div>
       <div class="flex gap-2 mb-3">
         <input id="w-address" placeholder="提现地址" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
         <button onclick="showAddrPicker()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded text-sm whitespace-nowrap">地址簿</button>
@@ -447,6 +448,7 @@ async function onAccountChange() {
   $('w-amount').value = '';
   $('w-balance').textContent = '可用余额: --';
   $('w-fee-est').textContent = '手续费: -- ｜ 预计到账: --';
+  updateNetworkStatusView();
   $('w-network-search').disabled = true;
   $('w-network-search').placeholder = '先选择币种';
   if (!accountId) return;
@@ -475,6 +477,24 @@ function updateBalanceView() {
   $('w-balance').textContent = selectedAsset
     ? `可用余额: ${selectedAvailable || '0'} ${selectedAsset}`
     : '可用余额: --';
+}
+
+function updateNetworkStatusView() {
+  const el = $('w-network-status');
+  if (!selectedChainInfo) {
+    el.textContent = '';
+    el.classList.add('hidden');
+    return;
+  }
+
+  if (selectedChainInfo.is_withdraw_disabled) {
+    el.textContent = `当前网络 ${selectedChain} 暂不可用，仍允许提交 API 提现，可配合定时提现持续重试。`;
+    el.classList.remove('hidden');
+    return;
+  }
+
+  el.textContent = '';
+  el.classList.add('hidden');
 }
 
 function updateFeeEstimateView() {
@@ -559,6 +579,7 @@ async function selectCurrency(currency) {
   selectedAvailable = '';
   selectedChainInfo = null;
   updateBalanceView();
+  updateNetworkStatusView();
   updateFeeEstimateView();
   $('w-asset-search').value = currency;
   $('w-asset-dropdown').classList.add('hidden');
@@ -571,13 +592,14 @@ async function selectCurrency(currency) {
   try {
     await loadAssetBalance(currency);
     const d = await api('GET', `/currencies/${encodeURIComponent(currency)}/chains?account_id=${encodeURIComponent(accountId)}`);
-    allChains = d.chains.filter(c => !c.is_withdraw_disabled);
+    allChains = d.chains;
     if (!allChains.length) {
-      $('w-network-search').placeholder = '该币种无可用网络';
+      $('w-network-search').placeholder = '该币种暂无网络信息';
       return;
     }
     $('w-network-search').disabled = false;
-    $('w-network-search').placeholder = `搜索网络 (共 ${allChains.length} 个)...`;
+    const availableCount = allChains.filter(c => !c.is_withdraw_disabled).length;
+    $('w-network-search').placeholder = `搜索网络 (可用 ${availableCount} / 共 ${allChains.length})...`;
   } catch (e) {
     toast(e.message, false);
     $('w-network-search').placeholder = '加载失败';
@@ -601,6 +623,7 @@ function filterNetworks() {
   if (!allChains.length) { dd.classList.add('hidden'); return; }
   const filtered = allChains
     .filter(c => c.chain.toUpperCase().includes(q) || c.name_en.toUpperCase().includes(q))
+    .sort((a, b) => Number(a.is_withdraw_disabled) - Number(b.is_withdraw_disabled))
     .slice(0, 50);
   if (!filtered.length) {
     dd.innerHTML = '<div class="px-3 py-2 text-gray-400 text-sm">无匹配结果</div>';
@@ -609,6 +632,7 @@ function filterNetworks() {
       `<div class="px-3 py-2 hover:bg-gray-600 cursor-pointer text-sm" onclick="selectNetwork('${esc(c.chain)}')">`
       + `<span class="font-medium">${esc(c.chain)}</span>`
       + (c.name_en ? ` <span class="text-gray-400 text-xs">${esc(c.name_en)}</span>` : '')
+      + (c.is_withdraw_disabled ? ' <span class="text-amber-400 text-xs">暂不可用</span>' : '')
       + `</div>`
     ).join('');
   }
@@ -624,6 +648,7 @@ function selectNetwork(chain) {
   selectedChainInfo = allChains.find(c => c.chain === chain) || null;
   $('w-network-search').value = chain;
   $('w-network-dropdown').classList.add('hidden');
+  updateNetworkStatusView();
   updateFeeEstimateView();
 }
 
