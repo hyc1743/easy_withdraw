@@ -556,6 +556,7 @@ function filterCurrencies() {
   if (!allCurrencies.length) { dd.classList.add('hidden'); return; }
   const filtered = allCurrencies
     .filter(c => c.currency.includes(q) || c.name_en.toUpperCase().includes(q))
+    .sort((a, b) => Number(a.withdraw_disabled) - Number(b.withdraw_disabled))
     .slice(0, 50);
   if (!filtered.length) {
     dd.innerHTML = '<div class="px-3 py-2 text-gray-400 text-sm">无匹配结果</div>';
@@ -564,6 +565,7 @@ function filterCurrencies() {
       `<div class="px-3 py-2 hover:bg-gray-600 cursor-pointer text-sm" onclick="selectCurrency('${esc(c.currency)}')">`
       + `<span class="font-medium">${esc(c.currency)}</span>`
       + (c.name_en ? ` <span class="text-gray-400 text-xs">${esc(c.name_en)}</span>` : '')
+      + (c.withdraw_disabled ? ' <span class="text-amber-400 text-xs">无可用网络</span>' : '')
       + `</div>`
     ).join('');
   }
@@ -599,7 +601,9 @@ async function selectCurrency(currency) {
     }
     $('w-network-search').disabled = false;
     const availableCount = allChains.filter(c => !c.is_withdraw_disabled).length;
-    $('w-network-search').placeholder = `搜索网络 (可用 ${availableCount} / 共 ${allChains.length})...`;
+    $('w-network-search').placeholder = availableCount > 0
+      ? `搜索网络 (可用 ${availableCount} / 共 ${allChains.length})...`
+      : `搜索网络 (当前暂无可用网络，共 ${allChains.length} 个)...`;
   } catch (e) {
     toast(e.message, false);
     $('w-network-search').placeholder = '加载失败';
