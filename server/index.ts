@@ -30,12 +30,12 @@ const publicDir = path.join(__dirname, "..", "public");
 app.use(express.static(publicDir));
 
 // Health check
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", (req, res) => {
   const cfg = loadConfig();
   res.json({
     status: "ok",
     initialized: cfg.security !== null,
-    unlocked: session.isUnlocked,
+    unlocked: session.isUnlocked(req),
   });
 });
 

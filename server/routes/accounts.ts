@@ -6,7 +6,6 @@ import { supportedExchanges } from "../exchange/adapters.js";
 export function accountRoutes(session: SessionManager): Router {
   const router = Router();
 
-  // POST /api/accounts — Upsert
   router.post("/", (req, res) => {
     const { id, exchange, api_key, api_secret, passphrase } = req.body;
     if (!id || !exchange || !api_key) {
@@ -26,9 +25,13 @@ export function accountRoutes(session: SessionManager): Router {
       return;
     }
 
-    const key = session.getKey()!;
-    const config = loadConfig();
+    const key = session.getKey(req);
+    if (!key) {
+      res.status(401).json({ ok: false, error: "UNAUTHORIZED", message: "Session not unlocked" });
+      return;
+    }
 
+    const config = loadConfig();
     const account = {
       id,
       exchange,
@@ -48,7 +51,6 @@ export function accountRoutes(session: SessionManager): Router {
     res.json({ ok: true });
   });
 
-  // GET /api/accounts — list (sanitized)
   router.get("/", (_req, res) => {
     const config = loadConfig();
     const accounts = config.accounts.map((a) => ({
@@ -59,7 +61,6 @@ export function accountRoutes(session: SessionManager): Router {
     res.json({ accounts });
   });
 
-  // DELETE /api/accounts/:id
   router.delete("/:id", (req, res) => {
     const config = loadConfig();
     const idx = config.accounts.findIndex((a) => a.id === req.params.id);

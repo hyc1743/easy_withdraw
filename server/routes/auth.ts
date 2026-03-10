@@ -1,14 +1,14 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import {
   deriveKey,
   generateSalt,
   createVerifyTag,
   checkVerifyTag,
   DEFAULT_KDF_PARAMS,
+  SESSION_COOKIE_NAME,
   type SessionManager,
 } from "../security.js";
 import { loadConfig, saveConfig } from "../config.js";
-import type { Request } from "express";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const FAILED_WINDOW_MS = 10 * 60 * 1000;
@@ -67,28 +67,33 @@ function clearUnlockFailed(ip: string): void {
   unlockAttempts.delete(ip);
 }
 
+function setSessionCookie(res: Response, sessionId: string): void {
+  res.setHeader(
+    "Set-Cookie",
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(sessionId)}; HttpOnly; Path=/; SameSite=Lax`,
+  );
+}
+
+function clearSessionCookie(res: Response): void {
+  res.setHeader(
+    "Set-Cookie",
+    `${SESSION_COOKIE_NAME}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`,
+  );
+}
+
 export function authRoutes(session: SessionManager): Router {
   const router = Router();
 
-  // POST /api/auth/init
   router.post("/init", async (req, res) => {
     const { masterPassword } = req.body;
     if (!masterPassword || typeof masterPassword !== "string") {
-      res.status(400).json({
-        ok: false,
-        error: "BAD_REQUEST",
-        message: "masterPassword is required",
-      });
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message: "masterPassword is required" });
       return;
     }
 
     const config = loadConfig();
     if (config.security) {
-      res.status(409).json({
-        ok: false,
-        error: "ALREADY_INITIALIZED",
-        message: "Master password already set",
-      });
+      res.status(409).json({ ok: false, error: "ALREADY_INITIALIZED", message: "Master password already set" });
       return;
     }
 
@@ -108,7 +113,6 @@ export function authRoutes(session: SessionManager): Router {
     res.json({ ok: true });
   });
 
-  // POST /api/auth/unlock
   router.post("/unlock", async (req, res) => {
     const ip = getClientIp(req);
     const blocked = checkUnlockBlocked(ip);
@@ -123,59 +127,45 @@ export function authRoutes(session: SessionManager): Router {
 
     const { masterPassword } = req.body;
     if (!masterPassword || typeof masterPassword !== "string") {
-      res.status(400).json({
-        ok: false,
-        error: "BAD_REQUEST",
-        message: "masterPassword is required",
-      });
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message: "masterPassword is required" });
       return;
     }
 
     const config = loadConfig();
     if (!config.security) {
-      res.status(400).json({
-        ok: false,
-        error: "NOT_INITIALIZED",
-        message: "Master password not set yet",
-      });
+      res.status(400).json({ ok: false, error: "NOT_INITIALIZED", message: "Master password not set yet" });
       return;
     }
 
     const salt = Buffer.from(config.security.salt_b64, "base64");
-    const key = await deriveKey(
-      masterPassword,
-      salt,
-      config.security.kdf_params,
-    );
+    const key = await deriveKey(masterPassword, salt, config.security.kdf_params);
 
     if (!checkVerifyTag(config.security.verify_tag, key)) {
       key.fill(0);
       markUnlockFailed(ip);
-      res.status(401).json({
-        ok: false,
-        error: "UNAUTHORIZED",
-        message: "Incorrect master password",
-      });
+      res.status(401).json({ ok: false, error: "UNAUTHORIZED", message: "Incorrect master password" });
       return;
     }
 
     clearUnlockFailed(ip);
-    session.unlock(key);
+    session.destroySession(session.getSessionId(req));
+    const sessionId = session.createSession(key);
+    key.fill(0);
+    setSessionCookie(res, sessionId);
     res.json({ ok: true });
   });
 
-  // POST /api/auth/lock
-  router.post("/lock", (_req, res) => {
-    session.lock();
+  router.post("/lock", (req, res) => {
+    session.destroySession(session.getSessionId(req));
+    clearSessionCookie(res);
     res.json({ ok: true });
   });
 
-  // GET /api/auth/status
-  router.get("/status", (_req, res) => {
+  router.get("/status", (req, res) => {
     const config = loadConfig();
     res.json({
       initialized: config.security !== null,
-      unlocked: session.isUnlocked,
+      unlocked: session.isUnlocked(req),
     });
   });
 

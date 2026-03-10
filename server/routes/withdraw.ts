@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { decrypt, type SessionManager } from "../security.js";
 import { loadConfig } from "../config.js";
 import { adapters } from "../exchange/adapters.js";
@@ -209,6 +209,7 @@ function loadLatestRunningJob(): ScheduleJobView | null {
 function resolveAccount(
   accountId: string,
   session: SessionManager,
+  req: Request,
 ): { adapter: ExchangeAdapter; creds: DecryptedCreds; exchange: string } {
   const config = loadConfig();
   const acct = config.accounts.find((a) => a.id === accountId);
@@ -217,7 +218,8 @@ function resolveAccount(
   const adapter = adapters[acct.exchange];
   if (!adapter) throw new Error(`Unsupported exchange: ${acct.exchange}`);
 
-  const key = session.getKey()!;
+  const key = session.getKey(req);
+  if (!key) throw new Error("Session not unlocked");
   const creds: DecryptedCreds = {
     api_key: acct.api_key,
     api_secret: acct.api_secret_enc ? decrypt(acct.api_secret_enc, key) : "",
@@ -376,8 +378,9 @@ function parsePositiveInt(value: unknown): number {
 function hydrateRuntimeJob(
   session: SessionManager,
   job: ScheduleJobView,
+  req: Request,
 ): ScheduleJobInternal {
-  const { adapter, creds, exchange } = resolveAccount(job.request.account_id, session);
+  const { adapter, creds, exchange } = resolveAccount(job.request.account_id, session, req);
   return {
     ...job,
     timer: null,
@@ -387,7 +390,7 @@ function hydrateRuntimeJob(
   };
 }
 
-function ensureRuntimeActiveJob(session: SessionManager): void {
+function ensureRuntimeActiveJob(session: SessionManager, req: Request): void {
   if (activeScheduleJobId && scheduleJobs.has(activeScheduleJobId)) {
     return;
   }
@@ -398,7 +401,7 @@ function ensureRuntimeActiveJob(session: SessionManager): void {
     return;
   }
 
-  const runtime = hydrateRuntimeJob(session, running);
+  const runtime = hydrateRuntimeJob(session, running, req);
   scheduleJobs.set(runtime.id, runtime);
   activeScheduleJobId = runtime.id;
 
@@ -422,7 +425,7 @@ export function withdrawRoutes(session: SessionManager): Router {
   router.post("/preview", async (req, res) => {
     try {
       const wReq = req.body as WithdrawRequest;
-      const { adapter } = resolveAccount(wReq.account_id, session);
+      const { adapter } = resolveAccount(wReq.account_id, session, req);
       await adapter.validateRequest(wReq);
       res.json({ ok: true, message: "Validation passed" });
     } catch (e: unknown) {
@@ -435,7 +438,7 @@ export function withdrawRoutes(session: SessionManager): Router {
   router.post("/execute", async (req, res) => {
     try {
       const wReq = req.body as WithdrawRequest;
-      const { adapter, creds, exchange } = resolveAccount(wReq.account_id, session);
+      const { adapter, creds, exchange } = resolveAccount(wReq.account_id, session, req);
       const autoId = `exec-${Date.now()}-${crypto.randomUUID()}`;
       const result = await executeWithdraw(wReq, adapter, creds, exchange, autoId);
       res.json(result);
@@ -452,7 +455,7 @@ export function withdrawRoutes(session: SessionManager): Router {
   // POST /api/withdraw/schedule/start
   router.post("/schedule/start", async (req, res) => {
     try {
-      ensureRuntimeActiveJob(session);
+      ensureRuntimeActiveJob(session, req);
       if (activeScheduleJobId) {
         res.status(409).json({
           ok: false,
@@ -470,7 +473,7 @@ export function withdrawRoutes(session: SessionManager): Router {
         throw new Error("withdraw payload is required");
       }
 
-      const { adapter, creds, exchange } = resolveAccount(wReq.account_id, session);
+      const { adapter, creds, exchange } = resolveAccount(wReq.account_id, session, req);
       await adapter.validateRequest(wReq);
 
       const now = new Date().toISOString();
@@ -512,7 +515,7 @@ export function withdrawRoutes(session: SessionManager): Router {
   // POST /api/withdraw/schedule/:id/stop
   router.post("/schedule/:id/stop", (req, res) => {
     try {
-      ensureRuntimeActiveJob(session);
+      ensureRuntimeActiveJob(session, req);
       const job = scheduleJobs.get(req.params.id);
       if (!job) {
         const persisted = loadScheduleJob(req.params.id);
@@ -554,7 +557,7 @@ export function withdrawRoutes(session: SessionManager): Router {
   // POST /api/withdraw/schedule/:id/resume
   router.post("/schedule/:id/resume", (req, res) => {
     try {
-      ensureRuntimeActiveJob(session);
+      ensureRuntimeActiveJob(session, req);
 
       if (activeScheduleJobId && activeScheduleJobId !== req.params.id) {
         res.status(409).json({
@@ -610,7 +613,7 @@ export function withdrawRoutes(session: SessionManager): Router {
         return;
       }
 
-      const hydrated = hydrateRuntimeJob(session, persisted);
+      const hydrated = hydrateRuntimeJob(session, persisted, req);
       hydrated.state = "running";
       hydrated.next_run_at = null;
       hydrated.updated_at = new Date().toISOString();
@@ -632,9 +635,9 @@ export function withdrawRoutes(session: SessionManager): Router {
   });
 
   // GET /api/withdraw/schedule/active
-  router.get("/schedule/active", (_req, res) => {
+  router.get("/schedule/active", (req, res) => {
     try {
-      ensureRuntimeActiveJob(session);
+      ensureRuntimeActiveJob(session, req);
       if (!activeScheduleJobId) {
         res.json({ ok: true, job: null });
         return;
@@ -650,7 +653,7 @@ export function withdrawRoutes(session: SessionManager): Router {
   // GET /api/withdraw/schedule/:id
   router.get("/schedule/:id", (req, res) => {
     try {
-      ensureRuntimeActiveJob(session);
+      ensureRuntimeActiveJob(session, req);
       const runtime = scheduleJobs.get(req.params.id);
       if (runtime) {
         res.json({ ok: true, job: toJobView(runtime) });
@@ -694,7 +697,7 @@ export function withdrawRoutes(session: SessionManager): Router {
         });
         return;
       }
-      const { adapter, creds } = resolveAccount(accountId, session);
+      const { adapter, creds } = resolveAccount(accountId, session, req);
       const result = await adapter.queryStatus(req.params.id, creds);
       res.json(result);
     } catch (e: unknown) {

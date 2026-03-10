@@ -122,6 +122,9 @@
       <div id="w-fee-est" class="text-xs text-gray-400 mb-3">
         手续费: -- ｜ 预计到账: --
       </div>
+      <div id="w-submit-warning" class="hidden mb-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+        当前所选网络暂不可用；仍可继续单次提现或定时提现，用于持续重试 API 提交。
+      </div>
       <div class="flex flex-col sm:flex-row gap-3 mb-3">
         <button onclick="doPreview()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预校验</button>
         <button onclick="doExecute()" class="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-2 rounded text-sm">单次提现</button>
@@ -208,7 +211,7 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s; re
 
 // ---- API helpers ----
 async function api(method, path, body) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts = { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch('/api' + path, opts);
   const data = await res.json();
@@ -481,20 +484,24 @@ function updateBalanceView() {
 
 function updateNetworkStatusView() {
   const el = $('w-network-status');
+  const warningEl = $('w-submit-warning');
   if (!selectedChainInfo) {
     el.textContent = '';
     el.classList.add('hidden');
+    warningEl.classList.add('hidden');
     return;
   }
 
   if (selectedChainInfo.is_withdraw_disabled) {
     el.textContent = `当前网络 ${selectedChain} 暂不可用，仍允许提交 API 提现，可配合定时提现持续重试。`;
     el.classList.remove('hidden');
+    warningEl.classList.remove('hidden');
     return;
   }
 
   el.textContent = '';
   el.classList.add('hidden');
+  warningEl.classList.add('hidden');
 }
 
 function updateFeeEstimateView() {
