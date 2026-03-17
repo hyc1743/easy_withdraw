@@ -46,9 +46,16 @@
   <div id="view-accounts" class="view">
     <div class="flex justify-between items-center mb-4">
       <h2 class="text-xl font-semibold">交易所账户</h2>
-      <button onclick="toggleAccountForm()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm">添加账户</button>
+      <button onclick="openNewAccountForm()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm">添加账户</button>
     </div>
     <div id="account-form" class="hidden bg-gray-800 rounded-lg p-6 mb-4">
+      <div class="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <div id="account-form-title" class="text-sm font-semibold text-white">添加账户</div>
+          <div id="account-form-hint" class="text-xs text-gray-400">保存后可在提现页直接使用。</div>
+        </div>
+        <button onclick="cancelAccountEdit()" type="button" class="text-xs text-gray-400 hover:text-white">取消</button>
+      </div>
       <input id="acct-id" placeholder="账户 ID (如 gate_main)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
       <select id="acct-exchange" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
         <option value="gate">Gate</option>
@@ -60,7 +67,31 @@
       <input id="acct-key" placeholder="API Key" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
       <input id="acct-secret" type="password" placeholder="API Secret" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
       <input id="acct-passphrase" type="password" placeholder="Passphrase (OKX/Bitget必填)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
-      <button onclick="saveAccount()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm w-full">保存</button>
+      <label id="account-clear-passphrase-wrap" class="hidden flex items-center gap-2 text-xs text-gray-400 mb-3">
+        <input id="acct-clear-passphrase" type="checkbox" class="rounded border-gray-500 bg-gray-700">
+        清空当前已保存的 Passphrase
+      </label>
+      <div id="account-secret-note" class="hidden text-xs text-gray-400 mb-3">留空表示保留当前已保存的密钥。</div>
+      <button id="account-save-btn" onclick="saveAccount()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm w-full">保存</button>
+    </div>
+    <div id="okx-transfer-form" class="hidden bg-gray-800 rounded-lg p-6 mb-4">
+      <div class="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <div class="text-sm font-semibold text-white">OKX 资金划转</div>
+          <div id="okx-transfer-account" class="text-xs text-gray-400">账户: --</div>
+        </div>
+        <button onclick="closeOkxTransferForm()" type="button" class="text-xs text-gray-400 hover:text-white">取消</button>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+        <input id="okx-transfer-ccy" placeholder="币种，如 USDT" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <input id="okx-transfer-amt" type="number" step="any" min="0" placeholder="数量" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <select id="okx-transfer-direction" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <option value="18-6">交易账户 -> 资金账户</option>
+          <option value="6-18">资金账户 -> 交易账户</option>
+        </select>
+      </div>
+      <button onclick="submitOkxTransfer()" class="bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded text-sm w-full">执行划转</button>
+      <div id="okx-transfer-result" class="hidden mt-3 rounded bg-gray-700 p-3 text-sm"></div>
     </div>
     <div id="account-list"></div>
   </div>
@@ -206,8 +237,16 @@ let historyOffset = 0;
 let _schPollTimer = null;
 let _schCurrentJobId = null;
 let _isUnlocked = false;
+let _editingAccountId = null;
+let _okxTransferAccountId = null;
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function okxAccountLabel(v) {
+  if (v === '6') return '资金账户';
+  if (v === '18') return '交易账户';
+  return v || '--';
+}
 
 // ---- API helpers ----
 async function api(method, path, body) {
@@ -305,8 +344,41 @@ async function doLock() {
 }
 
 // ---- Accounts ----
-function toggleAccountForm() {
-  $('account-form').classList.toggle('hidden');
+function resetAccountForm() {
+  _editingAccountId = null;
+  $('account-form-title').textContent = '添加账户';
+  $('account-form-hint').textContent = '保存后可在提现页直接使用。';
+  $('account-save-btn').textContent = '保存';
+  $('account-secret-note').classList.add('hidden');
+  $('account-clear-passphrase-wrap').classList.add('hidden');
+  $('acct-clear-passphrase').checked = false;
+  $('acct-id').disabled = false;
+  $('acct-id').value = '';
+  $('acct-exchange').value = 'gate';
+  $('acct-key').value = '';
+  $('acct-secret').value = '';
+  $('acct-passphrase').value = '';
+}
+
+function openNewAccountForm() {
+  resetAccountForm();
+  $('account-form').classList.remove('hidden');
+}
+
+function cancelAccountEdit() {
+  resetAccountForm();
+  $('account-form').classList.add('hidden');
+}
+
+function closeOkxTransferForm() {
+  _okxTransferAccountId = null;
+  $('okx-transfer-account').textContent = '账户: --';
+  $('okx-transfer-ccy').value = '';
+  $('okx-transfer-amt').value = '';
+  $('okx-transfer-direction').value = '18-6';
+  $('okx-transfer-result').classList.add('hidden');
+  $('okx-transfer-result').textContent = '';
+  $('okx-transfer-form').classList.add('hidden');
 }
 
 async function loadAccounts() {
@@ -316,25 +388,69 @@ async function loadAccounts() {
     if (!d.accounts.length) { el.innerHTML = '<p class="text-gray-500 text-sm">暂无账户</p>'; return; }
     el.innerHTML = d.accounts.map(a => `
       <div class="bg-gray-800 rounded p-4 mb-2 flex justify-between items-center">
-        <div><span class="font-medium">${esc(a.id)}</span> <span class="text-gray-400 text-sm ml-2">${esc(a.exchange)}</span></div>
-        <button onclick="deleteAccount('${esc(a.id)}')" class="text-red-400 hover:text-red-300 text-sm">删除</button>
+        <div>
+          <span class="font-medium">${esc(a.id)}</span>
+          <span class="text-gray-400 text-sm ml-2">${esc(a.exchange)}</span>
+          ${a.has_secret ? '<span class="text-xs text-emerald-400 ml-2">已保存密钥</span>' : '<span class="text-xs text-amber-400 ml-2">缺少密钥</span>'}
+        </div>
+        <div class="flex items-center gap-4">
+          ${a.exchange === 'okx' ? `<button onclick="openOkxTransferForm('${esc(a.id)}')" class="text-cyan-400 hover:text-cyan-300 text-sm">资金划转</button>` : ''}
+          <button onclick="editAccount('${esc(a.id)}')" class="text-blue-400 hover:text-blue-300 text-sm">编辑</button>
+          <button onclick="deleteAccount('${esc(a.id)}')" class="text-red-400 hover:text-red-300 text-sm">删除</button>
+        </div>
       </div>`).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+function openOkxTransferForm(id) {
+  _okxTransferAccountId = id;
+  $('okx-transfer-account').textContent = `账户: ${id}`;
+  $('okx-transfer-result').classList.add('hidden');
+  $('okx-transfer-result').textContent = '';
+  $('okx-transfer-form').classList.remove('hidden');
+  $('okx-transfer-ccy').focus();
+}
+
+async function editAccount(id) {
+  try {
+    const d = await api('GET', '/accounts/' + encodeURIComponent(id));
+    const a = d.account;
+    _editingAccountId = id;
+    $('account-form-title').textContent = '编辑账户';
+    $('account-form-hint').textContent = '敏感字段留空时会保留当前值。';
+    $('account-save-btn').textContent = '保存修改';
+    $('account-secret-note').classList.remove('hidden');
+    $('account-clear-passphrase-wrap').classList.toggle('hidden', !a.has_passphrase);
+    $('acct-clear-passphrase').checked = false;
+    $('acct-id').disabled = false;
+    $('acct-id').value = a.id;
+    $('acct-exchange').value = a.exchange;
+    $('acct-key').value = a.api_key || '';
+    $('acct-secret').value = '';
+    $('acct-passphrase').value = '';
+    $('account-form').classList.remove('hidden');
   } catch (e) { toast(e.message, false); }
 }
 
 async function saveAccount() {
   try {
-    await api('POST', '/accounts', {
+    const body = {
       id: $('acct-id').value,
       exchange: $('acct-exchange').value,
       api_key: $('acct-key').value,
       api_secret: $('acct-secret').value,
-      passphrase: $('acct-passphrase').value || null,
-    });
-    $('acct-id').value = $('acct-key').value = $('acct-secret').value = $('acct-passphrase').value = '';
-    $('account-form').classList.add('hidden');
-    toast('账户已保存');
+      passphrase: $('acct-clear-passphrase').checked ? null : $('acct-passphrase').value,
+    };
+    if (_editingAccountId) {
+      await api('PUT', '/accounts/' + encodeURIComponent(_editingAccountId), body);
+      toast('账户已更新');
+    } else {
+      await api('POST', '/accounts', body);
+      toast('账户已保存');
+    }
+    cancelAccountEdit();
     loadAccounts();
+    loadAccountSelect();
   } catch (e) { toast(e.message, false); }
 }
 
@@ -342,9 +458,50 @@ async function deleteAccount(id) {
   if (!confirm('确定删除账户 ' + id + '？')) return;
   try {
     await api('DELETE', '/accounts/' + id);
+    if (_editingAccountId === id) {
+      cancelAccountEdit();
+    }
+    if (_okxTransferAccountId === id) {
+      closeOkxTransferForm();
+    }
     toast('已删除');
     loadAccounts();
+    loadAccountSelect();
   } catch (e) { toast(e.message, false); }
+}
+
+async function submitOkxTransfer() {
+  if (!_okxTransferAccountId) {
+    toast('请先选择 OKX 账户', false);
+    return;
+  }
+  const ccy = $('okx-transfer-ccy').value.trim().toUpperCase();
+  const amt = $('okx-transfer-amt').value.trim();
+  const [from, to] = $('okx-transfer-direction').value.split('-');
+  if (!ccy || !amt) {
+    toast('请输入币种和数量', false);
+    return;
+  }
+  try {
+    const d = await api('POST', `/accounts/${encodeURIComponent(_okxTransferAccountId)}/okx-transfer`, {
+      ccy,
+      amt,
+      from,
+      to,
+    });
+    const t = d.transfer;
+    $('okx-transfer-result').classList.remove('hidden');
+    $('okx-transfer-result').innerHTML =
+      `<span class="text-green-400">划转成功</span> `
+      + `币种: ${esc(t.ccy)} ｜ 数量: ${esc(t.amt)} ｜ `
+      + `方向: ${esc(okxAccountLabel(t.from))} -> ${esc(okxAccountLabel(t.to))} ｜ `
+      + `流水号: ${esc(t.transId || '--')}`;
+    toast('OKX 划转成功');
+  } catch (e) {
+    $('okx-transfer-result').classList.remove('hidden');
+    $('okx-transfer-result').innerHTML = `<span class="text-red-400">${esc(e.message)}</span>`;
+    toast(e.message, false);
+  }
 }
 
 // ---- Address Book ----

@@ -12,6 +12,27 @@ import type {
 const BASE_URL = "https://www.okx.com";
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RETRIES = 2;
+const OKX_CLIENT_ID_MAX_LEN = 32;
+const OKX_ACCOUNT_FUNDING = "6";
+const OKX_ACCOUNT_TRADING = "18";
+
+export interface OkxTransferRequest {
+  ccy: string;
+  amt: string;
+  from: "6" | "18";
+  to: "6" | "18";
+  clientId?: string;
+}
+
+export interface OkxTransferResponse {
+  transId: string;
+  clientId?: string;
+  ccy: string;
+  amt: string;
+  from: string;
+  to: string;
+  raw: unknown;
+}
 
 function shouldRetryStatus(status: number): boolean {
   return status === 429 || status >= 500;
@@ -100,6 +121,67 @@ function parseDecimalPlaces(num: string): number {
   return Math.max(0, num.split(".")[1].replace(/0+$/, "").length);
 }
 
+function normalizeOkxClientId(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const cleaned = raw.replace(/[^a-zA-Z0-9]/g, "");
+  if (cleaned.length > 0 && cleaned.length <= OKX_CLIENT_ID_MAX_LEN) {
+    return cleaned;
+  }
+
+  return `wd${crypto.createHash("sha256").update(raw).digest("hex").slice(0, OKX_CLIENT_ID_MAX_LEN - 2)}`;
+}
+
+export async function okxFundsTransfer(
+  req: OkxTransferRequest,
+  creds: DecryptedCreds,
+): Promise<OkxTransferResponse> {
+  if (!req.ccy || !req.amt || !req.from || !req.to) {
+    throw new Error("Missing required fields: ccy, amt, from, to");
+  }
+  if (req.from === req.to) {
+    throw new Error("from and to must be different");
+  }
+  if (![OKX_ACCOUNT_FUNDING, OKX_ACCOUNT_TRADING].includes(req.from)) {
+    throw new Error("Invalid from account");
+  }
+  if (![OKX_ACCOUNT_FUNDING, OKX_ACCOUNT_TRADING].includes(req.to)) {
+    throw new Error("Invalid to account");
+  }
+  if (Number.isNaN(Number(req.amt)) || Number(req.amt) <= 0) {
+    throw new Error("Invalid amount");
+  }
+
+  const clientId = normalizeOkxClientId(req.clientId);
+  const raw = await okxRequest("POST", "/api/v5/asset/transfer", creds, {
+    ccy: req.ccy.toUpperCase(),
+    amt: req.amt,
+    from: req.from,
+    to: req.to,
+    ...(clientId ? { clientId } : {}),
+  });
+
+  const row = (raw as {
+    data?: Array<{
+      transId?: string;
+      clientId?: string;
+      ccy?: string;
+      amt?: string;
+      from?: string;
+      to?: string;
+    }>;
+  }).data?.[0];
+
+  return {
+    transId: row?.transId ?? "",
+    clientId: row?.clientId,
+    ccy: row?.ccy ?? req.ccy.toUpperCase(),
+    amt: row?.amt ?? req.amt,
+    from: row?.from ?? req.from,
+    to: row?.to ?? req.to,
+    raw,
+  };
+}
+
 export class OkxAdapter implements ExchangeAdapter {
   async validateRequest(req: WithdrawRequest): Promise<void> {
     if (!req.asset || !req.network || !req.address || !req.amount) {
@@ -114,6 +196,7 @@ export class OkxAdapter implements ExchangeAdapter {
     const chainsRaw = await this.listChains(req.asset, creds);
     const selected = chainsRaw.find((c) => c.chain === req.network);
     const fee = selected?.withdraw_fix ?? "0";
+    const clientId = normalizeOkxClientId(req.client_withdraw_id);
 
     const raw = await okxRequest("POST", "/api/v5/asset/withdrawal", creds, {
       ccy: req.asset,
@@ -122,7 +205,7 @@ export class OkxAdapter implements ExchangeAdapter {
       toAddr: req.address,
       chain: req.network,
       fee,
-      clientId: req.client_withdraw_id,
+      ...(clientId ? { clientId } : {}),
     });
 
     const data = raw as { data?: Array<{ wdId?: string }> };
