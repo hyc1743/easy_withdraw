@@ -1,12 +1,13 @@
 # Easy Withdraw
 
-本地优先的交易所提现工具。单页 HTML 前端 + Express 后端，一个进程搞定。
+本地优先的交易所提现和自动卖出工具。单页 HTML 前端 + Express 后端，一个进程搞定。
 
 ## 特性
 
 - 默认监听 `127.0.0.1`（localhost）
 - 主密码加密存储交易所密钥（Argon2id + AES-256-GCM）
 - 基于 SQLite 持久化配置、提现历史、定时任务与日志
+- 支持 Binance 现货按秒间隔自动市价卖出，直到余额卖完
 - 零前端构建步骤（Tailwind CDN + vanilla JS）
 - 会话空闲 15 分钟自动锁定
 - 目前支持 Gate / Binance / OKX / Bybit / Bitget
@@ -64,18 +65,20 @@ http://<TAILSCALE_IP>:4217
 1. 首次访问时设置主密码
 2. 输入主密码解锁会话
 3. 在「账户」页添加交易所 API Key / Secret（OKX、Bitget 还需 Passphrase）
-4. 在「提现」页填写提现信息，先预校验再执行
-5. 在「历史」页查看提现记录
+4. 在「提现」页填写提现信息，先预校验再执行，或启动定时提现
+5. 在「卖出」页选择 Binance 账户和交易对，预校验后启动自动卖出
+6. 在「历史」页查看提现记录
 
 ## 定时任务行为
 
-- 定时提现任务由后端执行，关闭浏览器不影响执行。
-- 会话锁定后，已启动的定时提现任务会继续执行（直到完成或手动停止）。
-- 定时任务状态持久化到 SQLite；服务重启后，重新解锁会话后会自动恢复运行中的任务。
+- 定时提现和自动卖出任务都由后端执行，关闭浏览器不影响执行。
+- 会话锁定后，已启动任务会继续执行（直到完成或手动停止）。
+- 任务状态持久化到 SQLite；服务重启后，重新解锁会话后会自动恢复运行中的任务。
 
 ## 安全建议
 
 - 在交易所侧将 API Key 限制为「只允许提现到白名单地址」
+- Binance 自动卖出需要 API Key 具备现货交易权限
 - 使用强主密码
 - 不要将 `~/.easy_withdraw/` 下的数据库与配置文件上传到公开仓库
 
@@ -94,6 +97,8 @@ server/
   routes/currencies.ts # 币种/链查询路由
   routes/addresses.ts  # 地址簿路由
   routes/templates.ts  # 提现模板路由
+  routes/tasks.ts      # 通用任务路由
+  routes/trade.ts      # Binance 自动卖出路由
   routes/withdraw.ts   # 提现路由
   exchange/types.ts    # 交易所统一接口
   exchange/gate.ts     # Gate 适配器
@@ -135,6 +140,15 @@ public/
 | GET | `/api/withdraw/schedule/:id` | 查询指定定时任务 |
 | GET | `/api/withdraw/history` | 提现历史 |
 | GET | `/api/withdraw/:id` | 查询提现状态 |
+| GET | `/api/trade/binance/symbols` | 列出 Binance 现货交易对 |
+| GET | `/api/trade/binance/symbol/:symbol` | 查询单个 Binance 交易对规则 |
+| GET | `/api/trade/binance/balance` | 查询 Binance 卖出币种余额 |
+| POST | `/api/trade/sell/preview` | 自动卖出预校验 |
+| POST | `/api/trade/sell/schedule/start` | 启动 Binance 自动卖出 |
+| GET | `/api/tasks/active` | 获取当前运行任务 |
+| GET | `/api/tasks/:id` | 查询指定任务 |
+| POST | `/api/tasks/:id/stop` | 停止任务 |
+| POST | `/api/tasks/:id/resume` | 继续已停止任务 |
 
 ## License
 

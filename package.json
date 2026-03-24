@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "tsx watch server/index.ts",
     "start": "tsx server/start.ts",
+    "test": "node --import tsx --test tests/**/*.test.ts",
     "build": "tsc",
     "serve": "node dist/server/index.js"
   },

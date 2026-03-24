@@ -5,6 +5,8 @@ import type {
   CurrencyInfo,
   DecryptedCreds,
   ExchangeAdapter,
+  MarketSellOrderResult,
+  SpotSymbolInfo,
   WithdrawRequest,
   WithdrawResponse,
 } from "./types.js";
@@ -92,6 +94,57 @@ async function binanceSignedRequest(
   }
 
   throw new Error("Binance API request failed");
+}
+
+async function binancePublicRequest(
+  endpoint: string,
+  params: Record<string, string | undefined> = {},
+): Promise<unknown> {
+  const query = toQuery(params);
+  const url = query ? `${BASE_URL}${endpoint}?${query}` : `${BASE_URL}${endpoint}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const resp = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    const text = await resp.text();
+    const data = text ? (JSON.parse(text) as unknown) : {};
+    if (!resp.ok) {
+      const msg = (data as { msg?: string }).msg ?? resp.statusText;
+      throw new Error(`Binance API error ${resp.status}: ${msg}`);
+    }
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeSpotSymbolInfo(raw: {
+  symbol?: string;
+  status?: string;
+  baseAsset?: string;
+  quoteAsset?: string;
+  filters?: Array<{
+    filterType?: string;
+    minQty?: string;
+    stepSize?: string;
+  }>;
+}): SpotSymbolInfo {
+  const lotSize =
+    raw.filters?.find((filter) => filter.filterType === "MARKET_LOT_SIZE") ??
+    raw.filters?.find((filter) => filter.filterType === "LOT_SIZE");
+
+  return {
+    symbol: raw.symbol ?? "",
+    status: raw.status ?? "UNKNOWN",
+    base_asset: raw.baseAsset ?? "",
+    quote_asset: raw.quoteAsset ?? "",
+    min_qty: lotSize?.minQty ?? "0",
+    step_size: lotSize?.stepSize ?? "0.00000001",
+  };
 }
 
 export class BinanceAdapter implements ExchangeAdapter {
@@ -215,6 +268,84 @@ export class BinanceAdapter implements ExchangeAdapter {
       available,
       locked,
       total: (Number(available) + Number(locked)).toString(),
+    };
+  }
+
+  async listSpotSymbols(_creds: DecryptedCreds): Promise<SpotSymbolInfo[]> {
+    const raw = await binancePublicRequest("/api/v3/exchangeInfo");
+    const symbols = (raw as { symbols?: Array<{
+      symbol?: string;
+      status?: string;
+      baseAsset?: string;
+      quoteAsset?: string;
+      filters?: Array<{
+        filterType?: string;
+        minQty?: string;
+        stepSize?: string;
+      }>;
+    }> }).symbols ?? [];
+
+    return symbols
+      .filter((symbol) => symbol.symbol && symbol.baseAsset && symbol.quoteAsset)
+      .map((symbol) => normalizeSpotSymbolInfo(symbol));
+  }
+
+  async getSpotSymbol(
+    symbol: string,
+    _creds: DecryptedCreds,
+  ): Promise<SpotSymbolInfo | null> {
+    const raw = await binancePublicRequest("/api/v3/exchangeInfo", {
+      symbol: symbol.toUpperCase(),
+    });
+    const symbols = (raw as { symbols?: Array<{
+      symbol?: string;
+      status?: string;
+      baseAsset?: string;
+      quoteAsset?: string;
+      filters?: Array<{
+        filterType?: string;
+        minQty?: string;
+        stepSize?: string;
+      }>;
+    }> }).symbols ?? [];
+    const first = symbols[0];
+    return first ? normalizeSpotSymbolInfo(first) : null;
+  }
+
+  async placeMarketSellOrder(
+    symbol: string,
+    quantity: string,
+    creds: DecryptedCreds,
+  ): Promise<MarketSellOrderResult> {
+    const raw = await binanceSignedRequest("POST", "/api/v3/order", creds, {
+      symbol: symbol.toUpperCase(),
+      side: "SELL",
+      type: "MARKET",
+      quantity,
+    });
+
+    const order = raw as {
+      orderId?: number;
+      symbol?: string;
+      status?: string;
+      executedQty?: string;
+      cummulativeQuoteQty?: string;
+    };
+    const executedQty = order.executedQty ?? "0";
+    const quoteQty = order.cummulativeQuoteQty ?? "0";
+    const avgPrice =
+      Number(executedQty) > 0
+        ? (Number(quoteQty) / Number(executedQty)).toString()
+        : "0";
+
+    return {
+      order_id: String(order.orderId ?? ""),
+      symbol: order.symbol ?? symbol.toUpperCase(),
+      status: order.status ?? "UNKNOWN",
+      executed_qty: executedQty,
+      quote_qty: quoteQty,
+      avg_price: avgPrice,
+      raw,
     };
   }
 }

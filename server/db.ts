@@ -13,10 +13,23 @@ interface LegacyConfig {
   settings?: AppConfig["settings"];
 }
 
-const DATA_DIR = path.join(os.homedir(), ".easy_withdraw");
-const DB_PATH = path.join(DATA_DIR, "easy_withdraw.db");
-const LEGACY_CONFIG_PATH = path.join(DATA_DIR, "config.json");
-const LEGACY_HISTORY_PATH = path.join(DATA_DIR, "history.json");
+function resolveDataDir(): string {
+  const override = process.env.EW_DATA_DIR?.trim();
+  if (override) return path.resolve(override);
+  return path.join(os.homedir(), ".easy_withdraw");
+}
+
+function resolveDbPath(dataDir: string): string {
+  return path.join(dataDir, "easy_withdraw.db");
+}
+
+function resolveLegacyConfigPath(dataDir: string): string {
+  return path.join(dataDir, "config.json");
+}
+
+function resolveLegacyHistoryPath(dataDir: string): string {
+  return path.join(dataDir, "history.json");
+}
 
 let db: Database.Database | null = null;
 
@@ -83,6 +96,7 @@ function ensureSchema(conn: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS schedule_jobs (
       id TEXT PRIMARY KEY,
+      job_type TEXT NOT NULL DEFAULT 'withdraw',
       state TEXT NOT NULL,
       interval_sec INTEGER NOT NULL,
       total_count INTEGER NOT NULL,
@@ -90,7 +104,9 @@ function ensureSchema(conn: Database.Database): void {
       next_run_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      request_json TEXT NOT NULL
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      progress_json TEXT NOT NULL DEFAULT '{}',
+      request_json TEXT
     );
 
     CREATE TABLE IF NOT EXISTS schedule_logs (
@@ -103,6 +119,36 @@ function ensureSchema(conn: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_schedule_logs_job_id_id
       ON schedule_logs(job_id, id DESC);
   `);
+
+  const scheduleJobColumns = conn
+    .prepare("PRAGMA table_info(schedule_jobs)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(scheduleJobColumns.map((column) => column.name));
+
+  if (!columnNames.has("job_type")) {
+    conn.exec(
+      "ALTER TABLE schedule_jobs ADD COLUMN job_type TEXT NOT NULL DEFAULT 'withdraw'",
+    );
+  }
+  if (!columnNames.has("payload_json")) {
+    conn.exec(
+      "ALTER TABLE schedule_jobs ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'",
+    );
+  }
+  if (!columnNames.has("progress_json")) {
+    conn.exec(
+      "ALTER TABLE schedule_jobs ADD COLUMN progress_json TEXT NOT NULL DEFAULT '{}'",
+    );
+  }
+  if (!columnNames.has("request_json")) {
+    conn.exec("ALTER TABLE schedule_jobs ADD COLUMN request_json TEXT");
+  }
+
+  conn.exec(`
+    UPDATE schedule_jobs
+    SET payload_json = COALESCE(NULLIF(payload_json, '{}'), request_json, '{}')
+    WHERE payload_json IS NULL OR payload_json = '{}'
+  `);
 }
 
 function migrateFromLegacyFiles(conn: Database.Database): void {
@@ -112,9 +158,10 @@ function migrateFromLegacyFiles(conn: Database.Database): void {
 
   if (!cfgRow) {
     let cfg = defaultConfig();
-    if (fs.existsSync(LEGACY_CONFIG_PATH)) {
+    const legacyConfigPath = getLegacyConfigPath();
+    if (fs.existsSync(legacyConfigPath)) {
       const raw = parseJsonSafe<LegacyConfig>(
-        fs.readFileSync(LEGACY_CONFIG_PATH, "utf-8"),
+        fs.readFileSync(legacyConfigPath, "utf-8"),
         {},
       );
       cfg = normalizeConfig(raw);
@@ -127,12 +174,13 @@ function migrateFromLegacyFiles(conn: Database.Database): void {
   const histCount = conn
     .prepare("SELECT COUNT(1) as n FROM withdraw_history")
     .get() as { n: number };
-  if (histCount.n > 0 || !fs.existsSync(LEGACY_HISTORY_PATH)) {
+  const legacyHistoryPath = getLegacyHistoryPath();
+  if (histCount.n > 0 || !fs.existsSync(legacyHistoryPath)) {
     return;
   }
 
   const legacyRows = parseJsonSafe<Array<Record<string, unknown>>>(
-    fs.readFileSync(LEGACY_HISTORY_PATH, "utf-8"),
+    fs.readFileSync(legacyHistoryPath, "utf-8"),
     [],
   );
   if (!Array.isArray(legacyRows) || legacyRows.length === 0) {
@@ -163,28 +211,35 @@ function migrateFromLegacyFiles(conn: Database.Database): void {
 }
 
 export function getDataDir(): string {
-  return DATA_DIR;
+  return resolveDataDir();
 }
 
 export function getDbPath(): string {
-  return DB_PATH;
+  return resolveDbPath(getDataDir());
 }
 
 export function getLegacyConfigPath(): string {
-  return LEGACY_CONFIG_PATH;
+  return resolveLegacyConfigPath(getDataDir());
 }
 
 export function getLegacyHistoryPath(): string {
-  return LEGACY_HISTORY_PATH;
+  return resolveLegacyHistoryPath(getDataDir());
 }
 
 export function getDb(): Database.Database {
   if (db) return db;
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  db = new Database(DB_PATH);
+  const dataDir = getDataDir();
+  fs.mkdirSync(dataDir, { recursive: true });
+  db = new Database(getDbPath());
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
   ensureSchema(db);
   migrateFromLegacyFiles(db);
   return db;
+}
+
+export function resetDbForTests(): void {
+  if (!db) return;
+  db.close();
+  db = null;
 }

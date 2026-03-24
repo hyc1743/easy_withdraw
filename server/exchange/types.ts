@@ -48,6 +48,25 @@ export interface AssetBalance {
   total: string;
 }
 
+export interface SpotSymbolInfo {
+  symbol: string;
+  status: string;
+  base_asset: string;
+  quote_asset: string;
+  min_qty: string;
+  step_size: string;
+}
+
+export interface MarketSellOrderResult {
+  order_id: string;
+  symbol: string;
+  status: string;
+  executed_qty: string;
+  quote_qty: string;
+  avg_price: string;
+  raw: unknown;
+}
+
 export interface ExchangeAdapter {
   validateRequest(req: WithdrawRequest): Promise<void>;
   withdraw(
@@ -61,4 +80,14 @@ export interface ExchangeAdapter {
   listCurrencies(creds: DecryptedCreds): Promise<CurrencyInfo[]>;
   listChains(currency: string, creds: DecryptedCreds): Promise<ChainInfo[]>;
   getBalance(currency: string, creds: DecryptedCreds): Promise<AssetBalance>;
+  listSpotSymbols?(creds: DecryptedCreds): Promise<SpotSymbolInfo[]>;
+  getSpotSymbol?(
+    symbol: string,
+    creds: DecryptedCreds,
+  ): Promise<SpotSymbolInfo | null>;
+  placeMarketSellOrder?(
+    symbol: string,
+    quantity: string,
+    creds: DecryptedCreds,
+  ): Promise<MarketSellOrderResult>;
 }

@@ -18,6 +18,7 @@
   <button onclick="showView('accounts')" class="nav-btn text-gray-400 hover:text-white" id="nav-accounts">账户</button>
   <button onclick="showView('addressbook')" class="nav-btn text-gray-400 hover:text-white" id="nav-addressbook">地址簿</button>
   <button onclick="showView('withdraw')" class="nav-btn text-gray-400 hover:text-white" id="nav-withdraw">提现</button>
+  <button onclick="showView('sell')" class="nav-btn text-gray-400 hover:text-white" id="nav-sell">卖出</button>
   <button onclick="showView('history')" class="nav-btn text-gray-400 hover:text-white" id="nav-history">历史</button>
   <div class="ml-auto">
     <button onclick="doLock()" id="btn-lock" class="text-sm text-red-400 hover:text-red-300 hidden">锁定</button>
@@ -183,6 +184,34 @@
     </div>
   </div>
 
+  <!-- Sell View -->
+  <div id="view-sell" class="view">
+    <h2 class="text-xl font-semibold mb-4">自动卖出</h2>
+    <div class="bg-gray-800 rounded-lg p-6">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+        <select id="sell-account" onchange="onSellAccountChange()" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <option value="">选择 Binance 账户</option>
+        </select>
+        <input id="sell-symbol-search" placeholder="交易对，如 BTCUSDT" autocomplete="off"
+          oninput="onSellSymbolInput()" onfocus="showSellSymbolDropdown()"
+          class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+      </div>
+      <div id="sell-symbol-dropdown" class="hidden mb-3 bg-gray-700 border border-gray-600 rounded max-h-48 overflow-y-auto"></div>
+      <div id="sell-symbol-meta" class="text-xs text-gray-400 mb-3">交易对: --</div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+        <input id="sell-step-amount" type="number" step="any" min="0" placeholder="每次卖出数量" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <input id="sell-interval-sec" type="number" min="1" value="60" placeholder="间隔秒数" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+      </div>
+      <div id="sell-balance" class="text-xs text-gray-400 mb-3">可用余额: --</div>
+      <div class="flex flex-col sm:flex-row gap-3 mb-3">
+        <button onclick="previewSellTask()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预校验</button>
+        <button onclick="startSellTask()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded text-sm">开始自动卖出</button>
+        <button onclick="stopActiveTask()" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm">停止当前任务</button>
+      </div>
+      <div id="sell-result" class="hidden mt-4 text-sm bg-gray-700 rounded p-3"></div>
+    </div>
+  </div>
+
   <!-- History View -->
   <div id="view-history" class="view">
     <h2 class="text-xl font-semibold mb-4">提现历史</h2>
@@ -197,8 +226,12 @@
   <!-- Right column: progress panel -->
   <div id="progress-panel" class="w-full lg:w-80 shrink-0 hidden">
     <div class="bg-gray-800 rounded-lg p-4 lg:sticky lg:top-6">
-      <h3 class="text-sm font-semibold mb-3 text-gray-300">提现进度</h3>
+      <h3 class="text-sm font-semibold mb-3 text-gray-300">任务进度</h3>
       <div id="prog-summary" class="text-sm mb-3">
+        <div class="flex justify-between mb-1">
+          <span class="text-gray-400">类型</span>
+          <span id="prog-type">--</span>
+        </div>
         <div class="flex justify-between mb-1">
           <span class="text-gray-400">状态</span>
           <span id="prog-state" class="text-yellow-400">--</span>
@@ -206,6 +239,10 @@
         <div class="flex justify-between mb-1">
           <span class="text-gray-400">轮次</span>
           <span id="prog-round">--</span>
+        </div>
+        <div class="flex justify-between mb-1">
+          <span class="text-gray-400">标的</span>
+          <span id="prog-subject">--</span>
         </div>
         <div class="flex justify-between mb-1">
           <span class="text-gray-400">间隔</span>
@@ -221,10 +258,10 @@
         <div id="prog-bar" class="bg-blue-500 h-2 rounded-full transition-all" style="width:0%"></div>
       </div>
       <div class="flex gap-2 mb-3">
-        <button onclick="stopSchedule()" id="btn-prog-stop" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm hidden">停止提现</button>
-        <button onclick="resumeSchedule()" id="btn-prog-resume" class="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded text-sm hidden">继续提现</button>
+        <button onclick="stopActiveTask()" id="btn-prog-stop" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm hidden">停止任务</button>
+        <button onclick="resumeActiveTask()" id="btn-prog-resume" class="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded text-sm hidden">继续任务</button>
       </div>
-      <button onclick="terminateScheduleTask()" id="btn-prog-terminate" class="w-full bg-gray-700 hover:bg-gray-600 text-white py-2 rounded text-sm mb-3 hidden">终止当前提现任务</button>
+      <button onclick="terminateActiveTask()" id="btn-prog-terminate" class="w-full bg-gray-700 hover:bg-gray-600 text-white py-2 rounded text-sm mb-3 hidden">清空当前任务面板</button>
       <h4 class="text-xs font-semibold text-gray-400 mb-2">执行日志</h4>
       <div id="prog-log" class="space-y-1 max-h-96 overflow-y-auto text-xs"></div>
     </div>
@@ -239,6 +276,8 @@ let _schCurrentJobId = null;
 let _isUnlocked = false;
 let _editingAccountId = null;
 let _okxTransferAccountId = null;
+let sellSymbols = [];
+let selectedSellSymbol = null;
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
@@ -272,7 +311,7 @@ function toast(msg, ok = true) {
 }
 
 function syncUnlockedUI() {
-  const navs = ['accounts', 'addressbook', 'withdraw', 'history'];
+  const navs = ['accounts', 'addressbook', 'withdraw', 'sell', 'history'];
   navs.forEach((name) => {
     const btn = $('nav-' + name);
     if (!btn) return;
@@ -295,6 +334,10 @@ function showView(name) {
   if (name === 'addressbook') loadAddresses();
   if (name === 'withdraw') {
     loadAccountSelect();
+    syncSchedule();
+  }
+  if (name === 'sell') {
+    loadSellAccountSelect();
     syncSchedule();
   }
   if (name === 'history') loadHistory(0);
@@ -595,6 +638,273 @@ async function loadAccountSelect() {
   loadTemplateSelect();
 }
 
+async function loadSellAccountSelect() {
+  try {
+    const d = await api('GET', '/accounts');
+    const sel = $('sell-account');
+    const binanceAccounts = d.accounts.filter(a => a.exchange === 'binance');
+    sel.innerHTML = '<option value="">选择 Binance 账户</option>' +
+      binanceAccounts.map(a => `<option value="${esc(a.id)}">${esc(a.id)} (binance)</option>`).join('');
+  } catch (e) { /* ignore if locked */ }
+}
+
+async function onSellAccountChange() {
+  sellSymbols = [];
+  selectedSellSymbol = null;
+  $('sell-symbol-search').value = '';
+  $('sell-symbol-meta').textContent = '交易对: --';
+  $('sell-balance').textContent = '可用余额: --';
+  $('sell-result').classList.add('hidden');
+  const accountId = $('sell-account').value;
+  if (!accountId) return;
+  try {
+    const d = await api('GET', `/trade/binance/symbols?account_id=${encodeURIComponent(accountId)}`);
+    sellSymbols = d.symbols || [];
+  } catch (e) {
+    toast(e.message, false);
+  }
+}
+
+function normalizeSellSymbolSearchValue(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function getSellSymbolDisplay(symbol) {
+  return `${symbol.base_asset}/${symbol.quote_asset}`;
+}
+
+function updateSellSymbolMeta() {
+  $('sell-symbol-meta').textContent = selectedSellSymbol
+    ? `交易对: ${getSellSymbolDisplay(selectedSellSymbol)}`
+    : '交易对: --';
+}
+
+function sellSymbolEditDistance(a, b) {
+  const left = normalizeSellSymbolSearchValue(a);
+  const right = normalizeSellSymbolSearchValue(b);
+  const rows = Array.from({ length: left.length + 1 }, () => new Array(right.length + 1).fill(0));
+
+  for (let i = 0; i <= left.length; i += 1) rows[i][0] = i;
+  for (let j = 0; j <= right.length; j += 1) rows[0][j] = j;
+
+  for (let i = 1; i <= left.length; i += 1) {
+    for (let j = 1; j <= right.length; j += 1) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      rows[i][j] = Math.min(
+        rows[i - 1][j] + 1,
+        rows[i][j - 1] + 1,
+        rows[i - 1][j - 1] + cost,
+      );
+    }
+  }
+
+  return rows[left.length][right.length];
+}
+
+function sellSymbolCharBagDistance(a, b) {
+  const left = normalizeSellSymbolSearchValue(a);
+  const right = normalizeSellSymbolSearchValue(b);
+  const counts = new Map();
+
+  for (const ch of left) {
+    counts.set(ch, (counts.get(ch) || 0) + 1);
+  }
+  for (const ch of right) {
+    counts.set(ch, (counts.get(ch) || 0) - 1);
+  }
+
+  let distance = 0;
+  for (const value of counts.values()) {
+    distance += Math.abs(value);
+  }
+  return distance;
+}
+
+function getFilteredSellSymbols(symbols, query, baseAsset, quoteAsset) {
+  const normalizedQuery = normalizeSellSymbolSearchValue(query);
+  const normalizedBase = normalizeSellSymbolSearchValue(baseAsset);
+  const normalizedQuote = normalizeSellSymbolSearchValue(quoteAsset);
+
+  const filteredByAsset = symbols.filter((symbol) => {
+    if (normalizedBase && normalizeSellSymbolSearchValue(symbol.base_asset) !== normalizedBase) return false;
+    if (normalizedQuote && normalizeSellSymbolSearchValue(symbol.quote_asset) !== normalizedQuote) return false;
+    return true;
+  });
+
+  if (!normalizedQuery) {
+    return filteredByAsset.slice(0, 50);
+  }
+
+  const directMatches = filteredByAsset.filter((symbol) => {
+    const normalizedSymbol = normalizeSellSymbolSearchValue(symbol.symbol);
+    const normalizedDisplay = normalizeSellSymbolSearchValue(getSellSymbolDisplay(symbol));
+    return normalizedSymbol.includes(normalizedQuery) || normalizedDisplay.includes(normalizedQuery);
+  });
+
+  if (directMatches.length > 0) {
+    return directMatches.slice(0, 50);
+  }
+
+  const scored = filteredByAsset.map((symbol) => {
+    const normalizedSymbol = normalizeSellSymbolSearchValue(symbol.symbol);
+    const normalizedDisplay = normalizeSellSymbolSearchValue(getSellSymbolDisplay(symbol));
+    const normalizedBaseAsset = normalizeSellSymbolSearchValue(symbol.base_asset);
+    const normalizedQuoteAsset = normalizeSellSymbolSearchValue(symbol.quote_asset);
+    let score = Math.min(
+      sellSymbolEditDistance(normalizedQuery, normalizedSymbol),
+      sellSymbolEditDistance(normalizedQuery, normalizedDisplay),
+    );
+
+    if (normalizedQuery.startsWith(normalizedBaseAsset)) {
+      const suffix = normalizedQuery.slice(normalizedBaseAsset.length);
+      score = Math.min(
+        score,
+        sellSymbolEditDistance(suffix, normalizedQuoteAsset),
+        sellSymbolCharBagDistance(suffix, normalizedQuoteAsset),
+      );
+    }
+
+    return {
+      symbol,
+      score,
+    };
+  });
+
+  const bestScore = Math.min(...scored.map((item) => item.score));
+  const maxScore = normalizedQuery.length >= 6 ? 3 : 2;
+  if (!Number.isFinite(bestScore) || bestScore > maxScore) {
+    return [];
+  }
+
+  return scored
+    .filter((item) => item.score === bestScore)
+    .map((item) => item.symbol)
+    .slice(0, 50);
+}
+
+function onSellSymbolInput() {
+  selectedSellSymbol = null;
+  updateSellSymbolMeta();
+  $('sell-balance').textContent = '可用余额: --';
+  filterSellSymbols();
+}
+
+function filterSellSymbols() {
+  const dropdown = $('sell-symbol-dropdown');
+  const q = $('sell-symbol-search').value.trim().toUpperCase();
+  const filtered = getFilteredSellSymbols(sellSymbols, q, '', '');
+
+  if (!filtered.length) {
+    dropdown.innerHTML = '<div class="px-3 py-2 text-gray-400 text-sm">无匹配交易对</div>';
+  } else {
+    dropdown.innerHTML = filtered.map((symbol) =>
+      `<div class="px-3 py-2 hover:bg-gray-600 cursor-pointer text-sm" onclick="selectSellSymbol('${esc(symbol.symbol)}')">`
+      + `<span class="font-medium">${esc(getSellSymbolDisplay(symbol))}</span>`
+      + `</div>`
+    ).join('');
+  }
+  dropdown.classList.remove('hidden');
+}
+
+function showSellSymbolDropdown() {
+  filterSellSymbols();
+}
+
+async function selectSellSymbol(symbolName) {
+  const accountId = $('sell-account').value;
+  if (!accountId) return;
+  try {
+    const d = await api('GET', `/trade/binance/symbol/${encodeURIComponent(symbolName)}?account_id=${encodeURIComponent(accountId)}`);
+    selectedSellSymbol = d.symbol;
+    $('sell-symbol-search').value = selectedSellSymbol?.symbol || symbolName;
+    updateSellSymbolMeta();
+    $('sell-symbol-dropdown').classList.add('hidden');
+    await loadSellBalance();
+  } catch (e) {
+    toast(e.message, false);
+  }
+}
+
+async function ensureSelectedSellSymbol() {
+  const accountId = $('sell-account').value;
+  const symbolName = $('sell-symbol-search').value.trim().toUpperCase();
+  if (!accountId || !symbolName) {
+    throw new Error('请选择交易对');
+  }
+  if (selectedSellSymbol?.symbol === symbolName) {
+    return selectedSellSymbol;
+  }
+  const d = await api('GET', `/trade/binance/symbol/${encodeURIComponent(symbolName)}?account_id=${encodeURIComponent(accountId)}`);
+  if (!d.symbol) {
+    throw new Error('交易对不存在');
+  }
+  selectedSellSymbol = d.symbol;
+  updateSellSymbolMeta();
+  return selectedSellSymbol;
+}
+
+async function loadSellBalance() {
+  const accountId = $('sell-account').value;
+  const baseAsset = selectedSellSymbol?.base_asset || '';
+  if (!accountId || !baseAsset) {
+    $('sell-balance').textContent = '可用余额: --';
+    return;
+  }
+  try {
+    const d = await api('GET', `/trade/binance/balance?account_id=${encodeURIComponent(accountId)}&asset=${encodeURIComponent(baseAsset)}`);
+    $('sell-balance').textContent = `可用余额: ${d.balance?.available || '0'} ${baseAsset}`;
+  } catch (e) {
+    $('sell-balance').textContent = '可用余额: --';
+    toast(e.message, false);
+  }
+}
+
+function getSellBody() {
+  return {
+    account_id: $('sell-account').value,
+    symbol: $('sell-symbol-search').value.trim().toUpperCase(),
+    base_asset: selectedSellSymbol?.base_asset || '',
+    quote_asset: selectedSellSymbol?.quote_asset || '',
+    step_amount: $('sell-step-amount').value,
+    interval_sec: parseInt($('sell-interval-sec').value, 10) || 60,
+  };
+}
+
+async function previewSellTask() {
+  try {
+    await ensureSelectedSellSymbol();
+    const d = await api('POST', '/trade/sell/preview', getSellBody());
+    const p = d.preview;
+    $('sell-result').classList.remove('hidden');
+    $('sell-result').innerHTML = `
+      <div class="text-green-400 mb-1">预校验完成</div>
+      <div>余额: ${esc(p.balance_available)} ${esc(p.symbol.base_asset)}</div>
+      <div>计划数量: ${esc(p.requested_qty)}</div>
+      <div>可执行数量: ${esc(p.executable_qty)}</div>
+      <div>最小下单量: ${esc(p.symbol.min_qty)} ｜ 步进: ${esc(p.symbol.step_size)}</div>
+      <div>状态: ${esc(p.symbol.status)} ｜ 本轮可执行: ${p.can_execute ? '是' : '否'}</div>
+    `;
+    await loadSellBalance();
+  } catch (e) {
+    $('sell-result').classList.remove('hidden');
+    $('sell-result').innerHTML = `<span class="text-red-400">${esc(e.message)}</span>`;
+  }
+}
+
+async function startSellTask() {
+  try {
+    await ensureSelectedSellSymbol();
+    const d = await api('POST', '/trade/sell/schedule/start', getSellBody());
+    _schCurrentJobId = d.job.id;
+    renderScheduleJob(d.job);
+    await loadSellBalance();
+    startSchedulePolling();
+    toast('自动卖出任务已启动');
+  } catch (e) {
+    toast(e.message, false);
+  }
+}
+
 async function onAccountChange() {
   const accountId = $('w-account').value;
   allCurrencies = [];
@@ -782,6 +1092,9 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('#w-network-search') && !e.target.closest('#w-network-dropdown')) {
     $('w-network-dropdown').classList.add('hidden');
   }
+  if (!e.target.closest('#sell-symbol-search') && !e.target.closest('#sell-symbol-dropdown')) {
+    $('sell-symbol-dropdown').classList.add('hidden');
+  }
 });
 
 // ---- Network search ----
@@ -967,8 +1280,10 @@ function clearProgressPanel() {
   _schCurrentJobId = null;
   stopSchedulePolling();
   $('progress-panel').classList.add('hidden');
+  $('prog-type').textContent = '--';
   $('prog-state').textContent = '--';
   $('prog-state').className = 'text-yellow-400';
+  $('prog-subject').textContent = '--';
   $('prog-interval').textContent = '--';
   $('prog-round').textContent = '--';
   $('prog-next').textContent = '--';
@@ -986,19 +1301,33 @@ function formatState(state) {
   return ['已停止', 'text-red-400'];
 }
 
+function formatTaskType(job) {
+  return job?.job_type === 'sell_market' ? '自动卖出' : '定时提现';
+}
+
 function renderScheduleJob(job) {
   if (!job) return;
   showProgressPanel();
   const [stateText, stateClass] = formatState(job.state);
-  const pct = job.total_count > 0 ? Math.round((job.done_count / job.total_count) * 100) : 0;
+  const isSell = job.job_type === 'sell_market';
+  const pct = job.total_count > 0
+    ? Math.round((job.done_count / job.total_count) * 100)
+    : (job.state === 'completed' ? 100 : 0);
   const remainSec = job.next_run_at
     ? Math.max(0, Math.ceil((new Date(job.next_run_at).getTime() - Date.now()) / 1000))
     : null;
+  const subject = isSell
+    ? (job.payload?.symbol || '--')
+    : `${job.payload?.asset || '--'} / ${job.payload?.network || '--'}`;
 
+  $('prog-type').textContent = formatTaskType(job);
   $('prog-state').textContent = stateText;
   $('prog-state').className = stateClass;
   $('prog-interval').textContent = `${job.interval_sec}s`;
-  $('prog-round').textContent = `${job.done_count} / ${job.total_count}`;
+  $('prog-round').textContent = isSell
+    ? `${job.done_count} 次`
+    : `${job.done_count} / ${job.total_count}`;
+  $('prog-subject').textContent = subject;
   $('prog-next').textContent = remainSec !== null ? `${remainSec}s` : '--';
   $('prog-bar').style.width = `${pct}%`;
 
@@ -1010,14 +1339,19 @@ function renderScheduleJob(job) {
   }).join('');
 
   $('sch-status').classList.remove('hidden');
-  $('sch-status').innerHTML = `进度: ${job.done_count}/${job.total_count}`;
-  setScheduleButtons(job.state === 'running');
+  $('sch-status').innerHTML = isSell
+    ? `累计卖出: ${esc(job.progress?.sold_total || '0')} ${esc(job.payload?.base_asset || '')}`
+    : `进度: ${job.done_count}/${job.total_count}`;
+  if (isSell) {
+    void loadSellBalance();
+  }
+  setScheduleButtons(job.state === 'running' && job.job_type === 'withdraw');
   setProgressButtons(job);
 }
 
 async function syncSchedule() {
   try {
-    const active = await api('GET', '/withdraw/schedule/active');
+    const active = await api('GET', '/tasks/active');
     if (active.job) {
       _schCurrentJobId = active.job.id;
       renderScheduleJob(active.job);
@@ -1026,10 +1360,31 @@ async function syncSchedule() {
     }
 
     if (_schCurrentJobId) {
-      const d = await api('GET', `/withdraw/schedule/${encodeURIComponent(_schCurrentJobId)}`);
+      const d = await api('GET', `/tasks/${encodeURIComponent(_schCurrentJobId)}`);
       renderScheduleJob(d.job);
       if (d.job.state !== 'running') stopSchedulePolling();
       return;
+    }
+
+    const sellViewActive = $('view-sell')?.classList.contains('active');
+    const withdrawViewActive = $('view-withdraw')?.classList.contains('active');
+    if (sellViewActive) {
+      const latest = await api('GET', '/tasks/latest?job_type=sell_market');
+      if (latest.job) {
+        _schCurrentJobId = latest.job.id;
+        renderScheduleJob(latest.job);
+        if (latest.job.state === 'running') startSchedulePolling();
+        return;
+      }
+    }
+    if (withdrawViewActive) {
+      const latest = await api('GET', '/tasks/latest?job_type=withdraw');
+      if (latest.job) {
+        _schCurrentJobId = latest.job.id;
+        renderScheduleJob(latest.job);
+        if (latest.job.state === 'running') startSchedulePolling();
+        return;
+      }
     }
 
     setScheduleButtons(false);
@@ -1054,65 +1409,73 @@ function stopSchedulePolling() {
 }
 
 async function stopSchedule() {
+  return stopActiveTask();
+}
+
+async function stopActiveTask() {
   try {
     if (!_schCurrentJobId) {
-      const active = await api('GET', '/withdraw/schedule/active');
+      const active = await api('GET', '/tasks/active');
       if (active.job) _schCurrentJobId = active.job.id;
     }
     if (!_schCurrentJobId) {
-      toast('当前没有运行中的定时任务', false);
+      toast('当前没有运行中的任务', false);
       return;
     }
-    const d = await api('POST', `/withdraw/schedule/${encodeURIComponent(_schCurrentJobId)}/stop`);
+    const d = await api('POST', `/tasks/${encodeURIComponent(_schCurrentJobId)}/stop`);
     renderScheduleJob(d.job);
     stopSchedulePolling();
-    toast('定时提现已停止');
+    toast('任务已停止');
   } catch (e) {
     toast(e.message, false);
   }
 }
 
 async function resumeSchedule() {
+  return resumeActiveTask();
+}
+
+async function resumeActiveTask() {
   try {
     if (!_schCurrentJobId) {
-      const active = await api('GET', '/withdraw/schedule/active');
+      const active = await api('GET', '/tasks/active');
       if (active.job) _schCurrentJobId = active.job.id;
     }
     if (!_schCurrentJobId) {
-      toast('没有可继续的定时任务', false);
+      toast('没有可继续的任务', false);
       return;
     }
-    const d = await api('POST', `/withdraw/schedule/${encodeURIComponent(_schCurrentJobId)}/resume`);
+    const d = await api('POST', `/tasks/${encodeURIComponent(_schCurrentJobId)}/resume`);
     renderScheduleJob(d.job);
     startSchedulePolling();
-    toast('定时提现已继续');
+    toast('任务已继续');
   } catch (e) {
     toast(e.message, false);
   }
 }
 
-async function terminateScheduleTask() {
+async function terminateActiveTask() {
   try {
     if (!_schCurrentJobId) {
       clearProgressPanel();
-      toast('已清空当前提现进度');
+      toast('已清空当前任务进度');
       return;
     }
 
     let state = null;
     try {
-      const d = await api('GET', `/withdraw/schedule/${encodeURIComponent(_schCurrentJobId)}`);
+      const d = await api('GET', `/tasks/${encodeURIComponent(_schCurrentJobId)}`);
       state = d.job?.state || null;
     } catch (e) {
       state = null;
     }
 
     if (state === 'running') {
-      await api('POST', `/withdraw/schedule/${encodeURIComponent(_schCurrentJobId)}/stop`);
+      await api('POST', `/tasks/${encodeURIComponent(_schCurrentJobId)}/stop`);
     }
 
     clearProgressPanel();
-    toast('当前提现任务已终止，进度面板已清空');
+    toast('当前任务已终止，进度面板已清空');
   } catch (e) {
     toast(e.message, false);
   }

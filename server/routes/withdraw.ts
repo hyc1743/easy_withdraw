@@ -1,39 +1,21 @@
 import crypto from "node:crypto";
 import { Router, type Request } from "express";
-import { decrypt, type SessionManager } from "../security.js";
-import { loadConfig } from "../config.js";
-import { adapters } from "../exchange/adapters.js";
-import { getDb } from "../db.js";
-import type {
-  DecryptedCreds,
-  ExchangeAdapter,
-  WithdrawRequest,
-  WithdrawResponse,
-} from "../exchange/types.js";
-
-interface HistoryRecord {
-  timestamp: string;
-  account_id: string;
-  exchange: string;
-  asset: string;
-  network: string;
-  address: string;
-  amount: string;
-  withdraw_id: string;
-  status: string;
-}
-
-interface ScheduleLogRecord {
-  timestamp: string;
-  ok: boolean;
-  message: string;
-}
-
-type ScheduleState = "running" | "completed" | "stopped";
+import type { SessionManager } from "../security.js";
+import type { WithdrawRequest } from "../exchange/types.js";
+import { executeWithdrawRequest, resolveAccountContext } from "../tasks/executors.js";
+import { ensureRuntimeHydrated, hydrateTask } from "../tasks/hydration.js";
+import { taskRuntime } from "../tasks/runtime.js";
+import { loadLatestRunningTask, loadTaskJob, persistTaskJob } from "../tasks/store.js";
+import type { TaskJob, TaskLogRecord } from "../tasks/types.js";
+import {
+  appendWithdrawHistory,
+  countWithdrawHistory,
+  listWithdrawHistory,
+} from "../tasks/withdraw-history.js";
 
 interface ScheduleJobView {
   id: string;
-  state: ScheduleState;
+  state: "running" | "completed" | "stopped";
   interval_sec: number;
   total_count: number;
   done_count: number;
@@ -41,330 +23,13 @@ interface ScheduleJobView {
   created_at: string;
   updated_at: string;
   request: WithdrawRequest;
-  logs: ScheduleLogRecord[];
-}
-
-interface ScheduleJobRow {
-  id: string;
-  state: ScheduleState;
-  interval_sec: number;
-  total_count: number;
-  done_count: number;
-  next_run_at: string | null;
-  created_at: string;
-  updated_at: string;
-  request_json: string;
-}
-
-interface ScheduleJobInternal extends ScheduleJobView {
-  timer: ReturnType<typeof setTimeout> | null;
-  adapter: ExchangeAdapter;
-  creds: DecryptedCreds;
-  exchange: string;
+  logs: TaskLogRecord[];
 }
 
 interface StartScheduleBody {
   interval_sec: number;
   count: number;
   withdraw: WithdrawRequest;
-}
-
-const db = getDb();
-const scheduleJobs = new Map<string, ScheduleJobInternal>();
-let activeScheduleJobId: string | null = null;
-
-function appendHistory(record: HistoryRecord): void {
-  db.prepare(
-    `INSERT INTO withdraw_history(
-      timestamp, account_id, exchange, asset, network, address, amount, withdraw_id, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    record.timestamp,
-    record.account_id,
-    record.exchange,
-    record.asset,
-    record.network,
-    record.address,
-    record.amount,
-    record.withdraw_id,
-    record.status,
-  );
-}
-
-function listHistory(limit: number, offset: number): HistoryRecord[] {
-  return db
-    .prepare(
-      `SELECT
-        timestamp, account_id, exchange, asset, network, address, amount, withdraw_id, status
-      FROM withdraw_history
-      ORDER BY id DESC
-      LIMIT ? OFFSET ?`,
-    )
-    .all(limit, offset) as HistoryRecord[];
-}
-
-function countHistory(): number {
-  const row = db
-    .prepare("SELECT COUNT(1) as n FROM withdraw_history")
-    .get() as { n: number };
-  return row.n;
-}
-
-function persistScheduleJob(job: ScheduleJobView): void {
-  db.prepare(
-    `INSERT INTO schedule_jobs(
-      id, state, interval_sec, total_count, done_count, next_run_at, created_at, updated_at, request_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      state = excluded.state,
-      interval_sec = excluded.interval_sec,
-      total_count = excluded.total_count,
-      done_count = excluded.done_count,
-      next_run_at = excluded.next_run_at,
-      updated_at = excluded.updated_at,
-      request_json = excluded.request_json`,
-  ).run(
-    job.id,
-    job.state,
-    job.interval_sec,
-    job.total_count,
-    job.done_count,
-    job.next_run_at,
-    job.created_at,
-    job.updated_at,
-    JSON.stringify(job.request),
-  );
-}
-
-function loadScheduleLogs(jobId: string, limit: number = 200): ScheduleLogRecord[] {
-  const rows = db
-    .prepare(
-      `SELECT timestamp, ok, message
-      FROM schedule_logs
-      WHERE job_id = ?
-      ORDER BY id DESC
-      LIMIT ?`,
-    )
-    .all(jobId, limit) as Array<{ timestamp: string; ok: number; message: string }>;
-  return rows.map((row) => ({
-    timestamp: row.timestamp,
-    ok: row.ok === 1,
-    message: row.message,
-  }));
-}
-
-function appendScheduleLog(jobId: string, ok: boolean, message: string): void {
-  db.prepare(
-    "INSERT INTO schedule_logs(job_id, timestamp, ok, message) VALUES (?, ?, ?, ?)",
-  ).run(jobId, new Date().toISOString(), ok ? 1 : 0, message);
-}
-
-function loadScheduleJob(jobId: string): ScheduleJobView | null {
-  const row = db
-    .prepare(
-      `SELECT id, state, interval_sec, total_count, done_count, next_run_at, created_at, updated_at, request_json
-      FROM schedule_jobs WHERE id = ?`,
-    )
-    .get(jobId) as ScheduleJobRow | undefined;
-  if (!row) return null;
-  return {
-    id: row.id,
-    state: row.state,
-    interval_sec: row.interval_sec,
-    total_count: row.total_count,
-    done_count: row.done_count,
-    next_run_at: row.next_run_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    request: JSON.parse(row.request_json) as WithdrawRequest,
-    logs: loadScheduleLogs(row.id),
-  };
-}
-
-function loadLatestRunningJob(): ScheduleJobView | null {
-  const row = db
-    .prepare(
-      `SELECT id, state, interval_sec, total_count, done_count, next_run_at, created_at, updated_at, request_json
-      FROM schedule_jobs
-      WHERE state = 'running'
-      ORDER BY created_at DESC
-      LIMIT 1`,
-    )
-    .get() as ScheduleJobRow | undefined;
-  if (!row) return null;
-  return {
-    id: row.id,
-    state: row.state,
-    interval_sec: row.interval_sec,
-    total_count: row.total_count,
-    done_count: row.done_count,
-    next_run_at: row.next_run_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    request: JSON.parse(row.request_json) as WithdrawRequest,
-    logs: loadScheduleLogs(row.id),
-  };
-}
-
-function resolveAccount(
-  accountId: string,
-  session: SessionManager,
-  req: Request,
-): { adapter: ExchangeAdapter; creds: DecryptedCreds; exchange: string } {
-  const config = loadConfig();
-  const acct = config.accounts.find((a) => a.id === accountId);
-  if (!acct) throw new Error("Account not found");
-
-  const adapter = adapters[acct.exchange];
-  if (!adapter) throw new Error(`Unsupported exchange: ${acct.exchange}`);
-
-  const key = session.getKey(req);
-  if (!key) throw new Error("Session not unlocked");
-  const creds: DecryptedCreds = {
-    api_key: acct.api_key,
-    api_secret: acct.api_secret_enc ? decrypt(acct.api_secret_enc, key) : "",
-    passphrase: acct.passphrase_enc
-      ? decrypt(acct.passphrase_enc, key)
-      : undefined,
-  };
-  return { adapter, creds, exchange: acct.exchange };
-}
-
-async function executeWithdraw(
-  wReq: WithdrawRequest,
-  adapter: ExchangeAdapter,
-  creds: DecryptedCreds,
-  exchange: string,
-  idempotencyKey?: string,
-): Promise<WithdrawResponse> {
-  const effectiveReq: WithdrawRequest = {
-    ...wReq,
-    client_withdraw_id: wReq.client_withdraw_id ?? idempotencyKey,
-  };
-
-  await adapter.validateRequest(effectiveReq);
-  const result = await adapter.withdraw(effectiveReq, creds);
-
-  appendHistory({
-    timestamp: new Date().toISOString(),
-    account_id: effectiveReq.account_id,
-    exchange,
-    asset: effectiveReq.asset,
-    network: effectiveReq.network,
-    address: effectiveReq.address,
-    amount: effectiveReq.amount,
-    withdraw_id: result.withdraw_id,
-    status: result.status,
-  });
-
-  return result;
-}
-
-function toJobView(job: ScheduleJobInternal): ScheduleJobView {
-  return {
-    id: job.id,
-    state: job.state,
-    interval_sec: job.interval_sec,
-    total_count: job.total_count,
-    done_count: job.done_count,
-    next_run_at: job.next_run_at,
-    created_at: job.created_at,
-    updated_at: job.updated_at,
-    request: job.request,
-    logs: job.logs,
-  };
-}
-
-function addScheduleLog(job: ScheduleJobInternal, ok: boolean, message: string): void {
-  const rec: ScheduleLogRecord = {
-    timestamp: new Date().toISOString(),
-    ok,
-    message,
-  };
-  job.logs.unshift(rec);
-  if (job.logs.length > 200) job.logs.length = 200;
-  appendScheduleLog(job.id, ok, message);
-}
-
-function scheduleNextRun(job: ScheduleJobInternal): void {
-  job.next_run_at = new Date(Date.now() + job.interval_sec * 1000).toISOString();
-  job.updated_at = new Date().toISOString();
-  persistScheduleJob(toJobView(job));
-
-  const delayMs = Math.max(
-    0,
-    new Date(job.next_run_at).getTime() - Date.now(),
-  );
-
-  job.timer = setTimeout(() => {
-    void runScheduleJob(job.id);
-  }, delayMs);
-}
-
-async function runScheduleJob(jobId: string): Promise<void> {
-  const job = scheduleJobs.get(jobId);
-  if (!job || job.state !== "running") {
-    return;
-  }
-
-  job.timer = null;
-  job.next_run_at = null;
-  job.updated_at = new Date().toISOString();
-  persistScheduleJob(toJobView(job));
-
-  const round = job.done_count + 1;
-  const idempotencyKey = `${job.id}-round-${round}`;
-
-  try {
-    const result = await executeWithdraw(
-      job.request,
-      job.adapter,
-      job.creds,
-      job.exchange,
-      idempotencyKey,
-    );
-    job.done_count += 1;
-    addScheduleLog(
-      job,
-      true,
-      `第${job.done_count}/${job.total_count}次成功 - ID: ${result.withdraw_id}`,
-    );
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    job.done_count += 1;
-    addScheduleLog(
-      job,
-      false,
-      `第${job.done_count}/${job.total_count}次失败: ${msg}`,
-    );
-  }
-
-  job.updated_at = new Date().toISOString();
-
-  if (job.done_count >= job.total_count) {
-    job.state = "completed";
-    job.next_run_at = null;
-    addScheduleLog(job, true, `全部完成: ${job.done_count}/${job.total_count}`);
-    persistScheduleJob(toJobView(job));
-    activeScheduleJobId = activeScheduleJobId === job.id ? null : activeScheduleJobId;
-    return;
-  }
-
-  persistScheduleJob(toJobView(job));
-  scheduleNextRun(job);
-}
-
-function stopScheduleJob(job: ScheduleJobInternal, reason: string): void {
-  if (job.timer) {
-    clearTimeout(job.timer);
-    job.timer = null;
-  }
-  job.state = "stopped";
-  job.next_run_at = null;
-  job.updated_at = new Date().toISOString();
-  addScheduleLog(job, false, reason);
-  persistScheduleJob(toJobView(job));
-  activeScheduleJobId = activeScheduleJobId === job.id ? null : activeScheduleJobId;
 }
 
 function parsePositiveInt(value: unknown): number {
@@ -375,88 +40,64 @@ function parsePositiveInt(value: unknown): number {
   return parsed;
 }
 
-function hydrateRuntimeJob(
-  session: SessionManager,
-  job: ScheduleJobView,
-  req: Request,
-): ScheduleJobInternal {
-  const { adapter, creds, exchange } = resolveAccount(job.request.account_id, session, req);
+function toWithdrawScheduleJobView(job: TaskJob): ScheduleJobView {
   return {
-    ...job,
-    timer: null,
-    adapter,
-    creds,
-    exchange,
+    id: job.id,
+    state: job.state,
+    interval_sec: job.interval_sec,
+    total_count: job.total_count,
+    done_count: job.done_count,
+    next_run_at: job.next_run_at,
+    created_at: job.created_at,
+    updated_at: job.updated_at,
+    request: job.payload as WithdrawRequest,
+    logs: job.logs,
   };
-}
-
-function ensureRuntimeActiveJob(session: SessionManager, req: Request): void {
-  if (activeScheduleJobId && scheduleJobs.has(activeScheduleJobId)) {
-    return;
-  }
-
-  const running = loadLatestRunningJob();
-  if (!running) {
-    activeScheduleJobId = null;
-    return;
-  }
-
-  const runtime = hydrateRuntimeJob(session, running, req);
-  scheduleJobs.set(runtime.id, runtime);
-  activeScheduleJobId = runtime.id;
-
-  if (runtime.next_run_at) {
-    const delayMs = new Date(runtime.next_run_at).getTime() - Date.now();
-    if (delayMs > 0) {
-      runtime.timer = setTimeout(() => {
-        void runScheduleJob(runtime.id);
-      }, delayMs);
-      return;
-    }
-  }
-
-  void runScheduleJob(runtime.id);
 }
 
 export function withdrawRoutes(session: SessionManager): Router {
   const router = Router();
 
-  // POST /api/withdraw/preview
   router.post("/preview", async (req, res) => {
     try {
-      const wReq = req.body as WithdrawRequest;
-      const { adapter } = resolveAccount(wReq.account_id, session, req);
-      await adapter.validateRequest(wReq);
+      const withdraw = req.body as WithdrawRequest;
+      const context = resolveAccountContext(withdraw.account_id, session, req);
+      await context.adapter.validateRequest(withdraw);
       res.json({ ok: true, message: "Validation passed" });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      res.status(400).json({ ok: false, error: "BAD_REQUEST", message: msg });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
     }
   });
 
-  // POST /api/withdraw/execute
   router.post("/execute", async (req, res) => {
     try {
-      const wReq = req.body as WithdrawRequest;
-      const { adapter, creds, exchange } = resolveAccount(wReq.account_id, session, req);
+      const withdraw = req.body as WithdrawRequest;
+      const context = resolveAccountContext(withdraw.account_id, session, req);
       const autoId = `exec-${Date.now()}-${crypto.randomUUID()}`;
-      const result = await executeWithdraw(wReq, adapter, creds, exchange, autoId);
-      res.json(result);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      res.status(500).json({
-        ok: false,
-        error: "EXCHANGE_ERROR",
-        message: msg,
+      const result = await executeWithdrawRequest(withdraw, context, autoId);
+      appendWithdrawHistory({
+        timestamp: new Date().toISOString(),
+        account_id: withdraw.account_id,
+        exchange: context.exchange,
+        asset: withdraw.asset,
+        network: withdraw.network,
+        address: withdraw.address,
+        amount: withdraw.amount,
+        withdraw_id: result.withdraw_id,
+        status: result.status,
       });
+      res.json(result);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ ok: false, error: "EXCHANGE_ERROR", message });
     }
   });
 
-  // POST /api/withdraw/schedule/start
   router.post("/schedule/start", async (req, res) => {
     try {
-      ensureRuntimeActiveJob(session, req);
-      if (activeScheduleJobId) {
+      ensureRuntimeHydrated(session, req);
+      if (taskRuntime.getActiveTask()) {
         res.status(409).json({
           ok: false,
           error: "SCHEDULE_RUNNING",
@@ -468,17 +109,18 @@ export function withdrawRoutes(session: SessionManager): Router {
       const body = req.body as StartScheduleBody;
       const intervalSec = parsePositiveInt(body.interval_sec);
       const count = parsePositiveInt(body.count);
-      const wReq = body.withdraw as WithdrawRequest;
-      if (!wReq || typeof wReq.account_id !== "string") {
+      const withdraw = body.withdraw as WithdrawRequest;
+      if (!withdraw?.account_id) {
         throw new Error("withdraw payload is required");
       }
 
-      const { adapter, creds, exchange } = resolveAccount(wReq.account_id, session, req);
-      await adapter.validateRequest(wReq);
+      const context = resolveAccountContext(withdraw.account_id, session, req);
+      await context.adapter.validateRequest(withdraw);
 
       const now = new Date().toISOString();
-      const job: ScheduleJobInternal = {
+      const job: TaskJob = {
         id: `sch_${crypto.randomUUID()}`,
+        job_type: "withdraw",
         state: "running",
         interval_sec: intervalSec,
         total_count: count,
@@ -486,80 +128,69 @@ export function withdrawRoutes(session: SessionManager): Router {
         next_run_at: null,
         created_at: now,
         updated_at: now,
-        request: wReq,
+        payload: withdraw,
+        progress: {},
         logs: [],
-        timer: null,
-        adapter,
-        creds,
-        exchange,
       };
 
-      addScheduleLog(
-        job,
-        true,
-        `定时提现开始: ${count} 次, 间隔 ${intervalSec}s`,
-      );
+      hydrateTask(job, session, req);
+      void taskRuntime.runNow(job.id);
 
-      scheduleJobs.set(job.id, job);
-      activeScheduleJobId = job.id;
-      persistScheduleJob(toJobView(job));
-      void runScheduleJob(job.id);
-
-      res.json({ ok: true, job: toJobView(job) });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      res.status(400).json({ ok: false, error: "BAD_REQUEST", message: msg });
+      const started = taskRuntime.getTask(job.id) ?? job;
+      res.json({ ok: true, job: toWithdrawScheduleJobView(started) });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
     }
   });
 
-  // POST /api/withdraw/schedule/:id/stop
   router.post("/schedule/:id/stop", (req, res) => {
     try {
-      ensureRuntimeActiveJob(session, req);
-      const job = scheduleJobs.get(req.params.id);
-      if (!job) {
-        const persisted = loadScheduleJob(req.params.id);
-        if (!persisted) {
-          res.status(404).json({
-            ok: false,
-            error: "NOT_FOUND",
-            message: "Schedule job not found",
-          });
-          return;
-        }
-        if (persisted.state === "running") {
-          persisted.state = "stopped";
-          persisted.next_run_at = null;
-          persisted.updated_at = new Date().toISOString();
-          persistScheduleJob(persisted);
-          appendScheduleLog(
-            persisted.id,
-            false,
-            `手动停止: 已完成 ${persisted.done_count}/${persisted.total_count}`,
-          );
-          persisted.logs = loadScheduleLogs(persisted.id);
-        }
-        res.json({ ok: true, job: persisted });
+      ensureRuntimeHydrated(session, req);
+      const runtimeTask = taskRuntime.getTask(req.params.id);
+      if (runtimeTask?.job_type === "withdraw") {
+        const stopped = taskRuntime.stopTask(
+          req.params.id,
+          `手动停止: 已完成 ${runtimeTask.done_count}/${runtimeTask.total_count}`,
+        );
+        res.json({ ok: true, job: toWithdrawScheduleJobView(stopped ?? runtimeTask) });
         return;
       }
 
-      if (job.state === "running") {
-        stopScheduleJob(job, `手动停止: 已完成 ${job.done_count}/${job.total_count}`);
+      const persisted = loadTaskJob(req.params.id);
+      if (!persisted || persisted.job_type !== "withdraw") {
+        res.status(404).json({
+          ok: false,
+          error: "NOT_FOUND",
+          message: "Schedule job not found",
+        });
+        return;
       }
 
-      res.json({ ok: true, job: toJobView(job) });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      res.status(400).json({ ok: false, error: "BAD_REQUEST", message: msg });
+      if (persisted.state === "running") {
+        persisted.state = "stopped";
+        persisted.next_run_at = null;
+        persisted.updated_at = new Date().toISOString();
+        persisted.logs.unshift({
+          timestamp: new Date().toISOString(),
+          ok: false,
+          message: `手动停止: 已完成 ${persisted.done_count}/${persisted.total_count}`,
+        });
+        persistTaskJob(persisted);
+      }
+
+      res.json({ ok: true, job: toWithdrawScheduleJobView(persisted) });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
     }
   });
 
-  // POST /api/withdraw/schedule/:id/resume
   router.post("/schedule/:id/resume", (req, res) => {
     try {
-      ensureRuntimeActiveJob(session, req);
-
-      if (activeScheduleJobId && activeScheduleJobId !== req.params.id) {
+      ensureRuntimeHydrated(session, req);
+      const active = taskRuntime.getActiveTask();
+      if (active && active.id !== req.params.id) {
         res.status(409).json({
           ok: false,
           error: "SCHEDULE_RUNNING",
@@ -568,43 +199,21 @@ export function withdrawRoutes(session: SessionManager): Router {
         return;
       }
 
-      const runtime = scheduleJobs.get(req.params.id);
-      if (runtime) {
-        if (runtime.state === "completed") {
-          res.status(400).json({
+      let task = taskRuntime.getTask(req.params.id);
+      if (!task) {
+        const persisted = loadTaskJob(req.params.id);
+        if (!persisted || persisted.job_type !== "withdraw") {
+          res.status(404).json({
             ok: false,
-            error: "BAD_REQUEST",
-            message: "已完成任务不能继续",
+            error: "NOT_FOUND",
+            message: "Schedule job not found",
           });
           return;
         }
-        if (runtime.state !== "running") {
-          runtime.state = "running";
-          runtime.next_run_at = null;
-          runtime.updated_at = new Date().toISOString();
-          addScheduleLog(
-            runtime,
-            true,
-            `手动继续: 当前进度 ${runtime.done_count}/${runtime.total_count}`,
-          );
-          persistScheduleJob(toJobView(runtime));
-          activeScheduleJobId = runtime.id;
-          void runScheduleJob(runtime.id);
-        }
-        res.json({ ok: true, job: toJobView(runtime) });
-        return;
+        task = hydrateTask(persisted, session, req);
       }
 
-      const persisted = loadScheduleJob(req.params.id);
-      if (!persisted) {
-        res.status(404).json({
-          ok: false,
-          error: "NOT_FOUND",
-          message: "Schedule job not found",
-        });
-        return;
-      }
-      if (persisted.state === "completed") {
+      if (task.state === "completed") {
         res.status(400).json({
           ok: false,
           error: "BAD_REQUEST",
@@ -613,55 +222,47 @@ export function withdrawRoutes(session: SessionManager): Router {
         return;
       }
 
-      const hydrated = hydrateRuntimeJob(session, persisted, req);
-      hydrated.state = "running";
-      hydrated.next_run_at = null;
-      hydrated.updated_at = new Date().toISOString();
-      addScheduleLog(
-        hydrated,
-        true,
-        `手动继续: 当前进度 ${hydrated.done_count}/${hydrated.total_count}`,
-      );
-      scheduleJobs.set(hydrated.id, hydrated);
-      activeScheduleJobId = hydrated.id;
-      persistScheduleJob(toJobView(hydrated));
-      void runScheduleJob(hydrated.id);
+      task.logs.unshift({
+        timestamp: new Date().toISOString(),
+        ok: true,
+        message: `手动继续: 当前进度 ${task.done_count}/${task.total_count}`,
+      });
+      persistTaskJob(task);
 
-      res.json({ ok: true, job: toJobView(hydrated) });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      res.status(400).json({ ok: false, error: "BAD_REQUEST", message: msg });
+      const resumed = taskRuntime.resumeTask(task.id) ?? task;
+      res.json({ ok: true, job: toWithdrawScheduleJobView(resumed) });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
     }
   });
 
-  // GET /api/withdraw/schedule/active
   router.get("/schedule/active", (req, res) => {
     try {
-      ensureRuntimeActiveJob(session, req);
-      if (!activeScheduleJobId) {
+      ensureRuntimeHydrated(session, req);
+      const active = taskRuntime.getActiveTask();
+      if (!active || active.job_type !== "withdraw") {
         res.json({ ok: true, job: null });
         return;
       }
-      const job = scheduleJobs.get(activeScheduleJobId) ?? null;
-      res.json({ ok: true, job: job ? toJobView(job) : null });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      res.status(400).json({ ok: false, error: "BAD_REQUEST", message: msg });
+      res.json({ ok: true, job: toWithdrawScheduleJobView(active) });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
     }
   });
 
-  // GET /api/withdraw/schedule/:id
   router.get("/schedule/:id", (req, res) => {
     try {
-      ensureRuntimeActiveJob(session, req);
-      const runtime = scheduleJobs.get(req.params.id);
-      if (runtime) {
-        res.json({ ok: true, job: toJobView(runtime) });
+      ensureRuntimeHydrated(session, req);
+      const runtimeTask = taskRuntime.getTask(req.params.id);
+      if (runtimeTask?.job_type === "withdraw") {
+        res.json({ ok: true, job: toWithdrawScheduleJobView(runtimeTask) });
         return;
       }
 
-      const job = loadScheduleJob(req.params.id);
-      if (!job) {
+      const persisted = loadTaskJob(req.params.id);
+      if (!persisted || persisted.job_type !== "withdraw") {
         res.status(404).json({
           ok: false,
           error: "NOT_FOUND",
@@ -669,23 +270,21 @@ export function withdrawRoutes(session: SessionManager): Router {
         });
         return;
       }
-      res.json({ ok: true, job });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      res.status(400).json({ ok: false, error: "BAD_REQUEST", message: msg });
+      res.json({ ok: true, job: toWithdrawScheduleJobView(persisted) });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
     }
   });
 
-  // GET /api/withdraw/history — must be before /:id
-  router.get("/history", (_req, res) => {
-    const limit = Number(_req.query.limit) || 20;
-    const offset = Number(_req.query.offset) || 0;
-    const records = listHistory(limit, offset);
-    const total = countHistory();
+  router.get("/history", (req, res) => {
+    const limit = Number(req.query.limit) || 20;
+    const offset = Number(req.query.offset) || 0;
+    const records = listWithdrawHistory(limit, offset);
+    const total = countWithdrawHistory();
     res.json({ records, total });
   });
 
-  // GET /api/withdraw/:id
   router.get("/:id", async (req, res) => {
     try {
       const accountId = req.query.account_id as string;
@@ -697,16 +296,12 @@ export function withdrawRoutes(session: SessionManager): Router {
         });
         return;
       }
-      const { adapter, creds } = resolveAccount(accountId, session, req);
-      const result = await adapter.queryStatus(req.params.id, creds);
+      const context = resolveAccountContext(accountId, session, req);
+      const result = await context.adapter.queryStatus(req.params.id, context.creds);
       res.json(result);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      res.status(500).json({
-        ok: false,
-        error: "EXCHANGE_ERROR",
-        message: msg,
-      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ ok: false, error: "EXCHANGE_ERROR", message });
     }
   });
 
