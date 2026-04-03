@@ -31,6 +31,89 @@ interface WithdrawHistoryRecord {
   status: string;
 }
 
+interface SellPreviewResult {
+  balance_available: string;
+  symbol: SpotSymbolInfo;
+  requested_qty: string;
+  executable_qty: string;
+  can_execute: boolean;
+  final_round: boolean;
+}
+
+function isSpotSymbolSellable(symbol: SpotSymbolInfo): boolean {
+  return symbol.status === "TRADING" || symbol.status === "SELLABLE";
+}
+
+function getSellNotional(quantity: string, symbol: SpotSymbolInfo): number {
+  const lastPrice = Number(symbol.last_price ?? "0");
+  const executedQty = Number(quantity);
+  if (!Number.isFinite(lastPrice) || lastPrice <= 0 || !Number.isFinite(executedQty)) {
+    return 0;
+  }
+  return lastPrice * executedQty;
+}
+
+function validateSellPreview(preview: {
+  symbol: SpotSymbolInfo;
+  executable_qty: string;
+  balance_available: string;
+}): { ok: boolean; message?: string } {
+  if (!isSpotSymbolSellable(preview.symbol)) {
+    return { ok: false, message: `交易对不可交易: ${preview.symbol.status}` };
+  }
+
+  if (
+    Number(preview.executable_qty) <= 0 ||
+    Number(preview.executable_qty) < Number(preview.symbol.min_qty)
+  ) {
+    return { ok: false, message: "可执行数量低于最小下单量" };
+  }
+
+  if (preview.symbol.min_quote_amount) {
+    const minQuoteAmount = Number(preview.symbol.min_quote_amount);
+    const orderNotional = getSellNotional(preview.executable_qty, preview.symbol);
+    if (
+      Number.isFinite(minQuoteAmount) &&
+      minQuoteAmount > 0 &&
+      Number.isFinite(orderNotional) &&
+      orderNotional > 0 &&
+      orderNotional < minQuoteAmount
+    ) {
+      return {
+        ok: false,
+        message: `按当前价格估算成交额约 ${orderNotional.toFixed(8).replace(/\.?0+$/, "")} ${preview.symbol.quote_asset}，低于最小 ${preview.symbol.min_quote_amount} ${preview.symbol.quote_asset}`,
+      };
+    }
+  }
+
+  if (Number(preview.balance_available) <= 0) {
+    return { ok: false, message: "余额为 0" };
+  }
+
+  return { ok: true };
+}
+
+function formatSellPreviewDebug(preview: {
+  symbol: SpotSymbolInfo;
+  requested_qty: string;
+  executable_qty: string;
+  balance_available: string;
+}): string {
+  const orderNotional = getSellNotional(preview.executable_qty, preview.symbol);
+  return [
+    `symbol=${preview.symbol.symbol}`,
+    `status=${preview.symbol.status}`,
+    `balance=${preview.balance_available}`,
+    `requested_qty=${preview.requested_qty}`,
+    `executable_qty=${preview.executable_qty}`,
+    `min_qty=${preview.symbol.min_qty}`,
+    `step_size=${preview.symbol.step_size}`,
+    `last_price=${preview.symbol.last_price ?? "0"}`,
+    `notional=${orderNotional}`,
+    `min_quote_amount=${preview.symbol.min_quote_amount ?? "0"}`,
+  ].join(" ");
+}
+
 function countDecimals(value: string): number {
   if (!value.includes(".")) return 0;
   return value.split(".")[1].replace(/0+$/, "").length;
@@ -42,7 +125,11 @@ function roundDownToStep(value: string, step: string): string {
   const valueInt = Math.floor(Number(value) * scale);
   const stepInt = Math.max(1, Math.floor(Number(step) * scale));
   const roundedInt = Math.floor(valueInt / stepInt) * stepInt;
-  return (roundedInt / scale).toFixed(decimals).replace(/\.?0+$/, "");
+  const formatted = (roundedInt / scale).toFixed(decimals);
+  if (!formatted.includes(".")) {
+    return formatted;
+  }
+  return formatted.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
 }
 
 export function resolveAccountContext(
@@ -144,17 +231,7 @@ export function createWithdrawTaskExecutor(
 export async function previewSellQuantity(
   payload: SellMarketTaskPayload,
   context: AccountContext,
-): Promise<{
-  balance_available: string;
-  symbol: SpotSymbolInfo;
-  requested_qty: string;
-  executable_qty: string;
-  can_execute: boolean;
-  final_round: boolean;
-}> {
-  if (context.exchange !== "binance") {
-    throw new Error("Only Binance spot auto sell is supported");
-  }
+): Promise<SellPreviewResult> {
   if (!context.adapter.getSpotSymbol || !context.adapter.placeMarketSellOrder) {
     throw new Error("Exchange does not support spot auto sell");
   }
@@ -177,11 +254,11 @@ export async function previewSellQuantity(
     symbol,
     requested_qty: requestedQty,
     executable_qty: executableQty,
-    can_execute:
-      Number(balance.available) > 0 &&
-      symbol.status === "TRADING" &&
-      Number(executableQty) >= Number(symbol.min_qty) &&
-      Number(executableQty) > 0,
+    can_execute: validateSellPreview({
+      symbol,
+      executable_qty: executableQty,
+      balance_available: balance.available,
+    }).ok,
     final_round: Number(balance.available) > 0 && Number(balance.available) < Number(payload.step_amount),
   };
 }
@@ -201,17 +278,14 @@ export function createSellMarketTaskExecutor(
           complete: true,
         };
       }
-      if (preview.symbol.status !== "TRADING") {
+      const previewValidation = validateSellPreview(preview);
+      if (!previewValidation.ok) {
         return {
           job,
-          log: { ok: false, message: `交易对不可交易: ${preview.symbol.status}` },
-          stop: true,
-        };
-      }
-      if (Number(preview.executable_qty) <= 0 || Number(preview.executable_qty) < Number(preview.symbol.min_qty)) {
-        return {
-          job,
-          log: { ok: false, message: "可执行数量低于最小下单量" },
+          log: {
+            ok: false,
+            message: `${previewValidation.message ?? "当前卖出条件不满足"} ｜ ${formatSellPreviewDebug(preview)}`,
+          },
           stop: true,
         };
       }

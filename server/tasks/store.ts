@@ -70,6 +70,14 @@ export function appendTaskLog(jobId: string, ok: boolean, message: string): void
   ).run(jobId, new Date().toISOString(), ok ? 1 : 0, message);
 }
 
+export function deleteTaskJob(jobId: string): void {
+  const tx = db.transaction((id: string) => {
+    db.prepare("DELETE FROM schedule_logs WHERE job_id = ?").run(id);
+    db.prepare("DELETE FROM schedule_jobs WHERE id = ?").run(id);
+  });
+  tx(jobId);
+}
+
 export function persistTaskJob(job: TaskJob): void {
   db.prepare(
     `INSERT INTO schedule_jobs(

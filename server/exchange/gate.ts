@@ -7,6 +7,8 @@ import type {
   CurrencyInfo,
   ChainInfo,
   AssetBalance,
+  MarketSellOrderResult,
+  SpotSymbolInfo,
 } from "./types.js";
 
 const BASE_URL = "https://api.gateio.ws";
@@ -108,6 +110,61 @@ async function gateRequest(
   }
 
   throw new Error("Gate API request failed");
+}
+
+async function gatePublicRequest(
+  endpoint: string,
+  query: string = "",
+): Promise<unknown> {
+  const path = API_PREFIX + endpoint;
+  const url = BASE_URL + path + (query ? `?${query}` : "");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const resp = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    const text = await resp.text();
+    const data = text ? (JSON.parse(text) as unknown) : {};
+
+    if (!resp.ok) {
+      const msg = (data as { message?: string }).message ?? resp.statusText;
+      throw new Error(`Gate API error ${resp.status}: ${msg}`);
+    }
+
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function gatePrecisionToStepSize(precision: number): string {
+  if (!Number.isInteger(precision) || precision <= 0) {
+    return "1";
+  }
+  return `0.${"0".repeat(Math.max(0, precision - 1))}1`;
+}
+
+function normalizeGateTradeStatus(status: string | undefined): string {
+  const normalized = String(status ?? "").toLowerCase();
+  if (normalized === "tradable" || normalized === "sellable") {
+    return "TRADING";
+  }
+  if (!normalized) {
+    return "UNKNOWN";
+  }
+  return normalized.toUpperCase();
+}
+
+async function getGateLastPrice(symbol: string): Promise<string> {
+  const raw = await gatePublicRequest(
+    "/spot/tickers",
+    `currency_pair=${encodeURIComponent(symbol.toUpperCase())}`,
+  );
+  const tickers = raw as Array<{ last?: string }>;
+  return tickers[0]?.last ?? "0";
 }
 
 export class GateAdapter implements ExchangeAdapter {
@@ -244,6 +301,104 @@ export class GateAdapter implements ExchangeAdapter {
       available,
       locked,
       total,
+    };
+  }
+
+  async listSpotSymbols(_creds: DecryptedCreds): Promise<SpotSymbolInfo[]> {
+    const raw = await gatePublicRequest("/spot/currency_pairs");
+    const pairs = raw as Array<{
+      id?: string;
+      base?: string;
+      quote?: string;
+      trade_status?: string;
+      min_base_amount?: string;
+      min_quote_amount?: string;
+      amount_precision?: number;
+    }>;
+
+    return pairs
+      .filter((pair) => pair.id && pair.base && pair.quote)
+      .map((pair) => ({
+        symbol: pair.id ?? "",
+        status: normalizeGateTradeStatus(pair.trade_status),
+        base_asset: pair.base ?? "",
+        quote_asset: pair.quote ?? "",
+        min_qty: pair.min_base_amount ?? "0",
+        step_size: gatePrecisionToStepSize(Number(pair.amount_precision ?? 8)),
+        min_quote_amount: pair.min_quote_amount ?? "0",
+      }));
+  }
+
+  async getSpotSymbol(
+    symbol: string,
+    _creds: DecryptedCreds,
+  ): Promise<SpotSymbolInfo | null> {
+    const raw = await gatePublicRequest(`/spot/currency_pairs/${encodeURIComponent(symbol.toUpperCase())}`);
+    const pair = raw as {
+      id?: string;
+      base?: string;
+      quote?: string;
+      trade_status?: string;
+      min_base_amount?: string;
+      min_quote_amount?: string;
+      amount_precision?: number;
+    };
+
+    if (!pair.id || !pair.base || !pair.quote) {
+      return null;
+    }
+
+    const lastPrice = await getGateLastPrice(symbol);
+
+    return {
+      symbol: pair.id,
+      status: normalizeGateTradeStatus(pair.trade_status),
+      base_asset: pair.base,
+      quote_asset: pair.quote,
+      min_qty: pair.min_base_amount ?? "0",
+      step_size: gatePrecisionToStepSize(Number(pair.amount_precision ?? 8)),
+      min_quote_amount: pair.min_quote_amount ?? "0",
+      last_price: lastPrice,
+    };
+  }
+
+  async placeMarketSellOrder(
+    symbol: string,
+    quantity: string,
+    creds: DecryptedCreds,
+  ): Promise<MarketSellOrderResult> {
+    const raw = await gateRequest("POST", "/spot/orders", creds, {
+      currency_pair: symbol.toUpperCase(),
+      account: "spot",
+      side: "sell",
+      type: "market",
+      amount: quantity,
+      time_in_force: "ioc",
+    });
+
+    const order = raw as {
+      id?: string;
+      currency_pair?: string;
+      status?: string;
+      filled_amount?: string;
+      filled_total?: string;
+      avg_deal_price?: string;
+    };
+    const executedQty = order.filled_amount ?? "0";
+    const quoteQty = order.filled_total ?? "0";
+    const avgPrice =
+      Number(executedQty) > 0
+        ? order.avg_deal_price ?? (Number(quoteQty) / Number(executedQty)).toString()
+        : "0";
+
+    return {
+      order_id: String(order.id ?? ""),
+      symbol: order.currency_pair ?? symbol.toUpperCase(),
+      status: order.status ?? "UNKNOWN",
+      executed_qty: executedQty,
+      quote_qty: quoteQty,
+      avg_price: avgPrice,
+      raw,
     };
   }
 }

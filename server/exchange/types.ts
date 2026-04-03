@@ -55,6 +55,8 @@ export interface SpotSymbolInfo {
   quote_asset: string;
   min_qty: string;
   step_size: string;
+  min_quote_amount?: string;
+  last_price?: string;
 }
 
 export interface MarketSellOrderResult {

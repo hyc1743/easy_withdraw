@@ -168,6 +168,15 @@ export class TaskRuntime {
     return entry.job;
   }
 
+  removeTask(jobId: string): TaskJob | null {
+    const entry = this.tasks.get(jobId);
+    if (!entry) return null;
+    this.clearTaskTimer(jobId);
+    this.tasks.delete(jobId);
+    this.activeTaskId = this.activeTaskId === jobId ? null : this.activeTaskId;
+    return entry.job;
+  }
+
   clearActiveTask(): void {
     this.activeTaskId = null;
   }

@@ -190,9 +190,9 @@
     <div class="bg-gray-800 rounded-lg p-6">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <select id="sell-account" onchange="onSellAccountChange()" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-          <option value="">选择 Binance 账户</option>
+          <option value="">选择支持卖出的账户</option>
         </select>
-        <input id="sell-symbol-search" placeholder="交易对，如 BTCUSDT" autocomplete="off"
+        <input id="sell-symbol-search" placeholder="交易对，如 BTCUSDT 或 BTC_USDT" autocomplete="off"
           oninput="onSellSymbolInput()" onfocus="showSellSymbolDropdown()"
           class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
       </div>
@@ -278,6 +278,7 @@ let _editingAccountId = null;
 let _okxTransferAccountId = null;
 let sellSymbols = [];
 let selectedSellSymbol = null;
+let sellAccountExchangeMap = new Map();
 let _lastRenderedTask = null;
 let _dismissedLatestTaskIds = {
   withdraw: null,
@@ -647,10 +648,15 @@ async function loadSellAccountSelect() {
   try {
     const d = await api('GET', '/accounts');
     const sel = $('sell-account');
-    const binanceAccounts = d.accounts.filter(a => a.exchange === 'binance');
-    sel.innerHTML = '<option value="">选择 Binance 账户</option>' +
-      binanceAccounts.map(a => `<option value="${esc(a.id)}">${esc(a.id)} (binance)</option>`).join('');
+    const sellAccounts = d.accounts.filter(a => a.exchange === 'binance' || a.exchange === 'gate');
+    sellAccountExchangeMap = new Map(sellAccounts.map(a => [a.id, a.exchange]));
+    sel.innerHTML = '<option value="">选择支持卖出的账户</option>' +
+      sellAccounts.map(a => `<option value="${esc(a.id)}">${esc(a.id)} (${esc(a.exchange)})</option>`).join('');
   } catch (e) { /* ignore if locked */ }
+}
+
+function getSellAccountExchange() {
+  return sellAccountExchangeMap.get($('sell-account').value) || '';
 }
 
 async function onSellAccountChange() {
@@ -663,7 +669,7 @@ async function onSellAccountChange() {
   const accountId = $('sell-account').value;
   if (!accountId) return;
   try {
-    const d = await api('GET', `/trade/binance/symbols?account_id=${encodeURIComponent(accountId)}`);
+    const d = await api('GET', `/trade/symbols?account_id=${encodeURIComponent(accountId)}`);
     sellSymbols = d.symbols || [];
   } catch (e) {
     toast(e.message, false);
@@ -680,7 +686,7 @@ function getSellSymbolDisplay(symbol) {
 
 function updateSellSymbolMeta() {
   $('sell-symbol-meta').textContent = selectedSellSymbol
-    ? `交易对: ${getSellSymbolDisplay(selectedSellSymbol)}`
+    ? `交易对: ${getSellSymbolDisplay(selectedSellSymbol)} ｜ 交易所: ${getSellAccountExchange() || '--'}`
     : '交易对: --';
 }
 
@@ -819,7 +825,7 @@ async function selectSellSymbol(symbolName) {
   const accountId = $('sell-account').value;
   if (!accountId) return;
   try {
-    const d = await api('GET', `/trade/binance/symbol/${encodeURIComponent(symbolName)}?account_id=${encodeURIComponent(accountId)}`);
+    const d = await api('GET', `/trade/symbol/${encodeURIComponent(symbolName)}?account_id=${encodeURIComponent(accountId)}`);
     selectedSellSymbol = d.symbol;
     $('sell-symbol-search').value = selectedSellSymbol?.symbol || symbolName;
     updateSellSymbolMeta();
@@ -839,7 +845,7 @@ async function ensureSelectedSellSymbol() {
   if (selectedSellSymbol?.symbol === symbolName) {
     return selectedSellSymbol;
   }
-  const d = await api('GET', `/trade/binance/symbol/${encodeURIComponent(symbolName)}?account_id=${encodeURIComponent(accountId)}`);
+  const d = await api('GET', `/trade/symbol/${encodeURIComponent(symbolName)}?account_id=${encodeURIComponent(accountId)}`);
   if (!d.symbol) {
     throw new Error('交易对不存在');
   }
@@ -856,7 +862,7 @@ async function loadSellBalance() {
     return;
   }
   try {
-    const d = await api('GET', `/trade/binance/balance?account_id=${encodeURIComponent(accountId)}&asset=${encodeURIComponent(baseAsset)}`);
+    const d = await api('GET', `/trade/balance?account_id=${encodeURIComponent(accountId)}&asset=${encodeURIComponent(baseAsset)}`);
     $('sell-balance').textContent = `可用余额: ${d.balance?.available || '0'} ${baseAsset}`;
   } catch (e) {
     $('sell-balance').textContent = '可用余额: --';
@@ -887,6 +893,7 @@ async function previewSellTask() {
       <div>计划数量: ${esc(p.requested_qty)}</div>
       <div>可执行数量: ${esc(p.executable_qty)}</div>
       <div>最小下单量: ${esc(p.symbol.min_qty)} ｜ 步进: ${esc(p.symbol.step_size)}</div>
+      <div>最新价: ${esc(p.symbol.last_price || '--')} ｜ 最小成交额: ${esc(p.symbol.min_quote_amount || '--')} ${esc(p.symbol.quote_asset || '')}</div>
       <div>状态: ${esc(p.symbol.status)} ｜ 本轮可执行: ${p.can_execute ? '是' : '否'}</div>
     `;
     await loadSellBalance();
@@ -1491,9 +1498,7 @@ async function terminateActiveTask() {
       state = null;
     }
 
-    if (state === 'running') {
-      await api('POST', `/tasks/${encodeURIComponent(_schCurrentJobId)}/stop`);
-    }
+    await api('POST', `/tasks/${encodeURIComponent(_schCurrentJobId)}/terminate`);
 
     dismissLatestTask(_lastRenderedTask);
     clearProgressPanel();

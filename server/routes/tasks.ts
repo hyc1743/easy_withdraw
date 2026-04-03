@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { SessionManager } from "../security.js";
 import { ensureRuntimeHydrated, hydrateTask } from "../tasks/hydration.js";
 import { taskRuntime } from "../tasks/runtime.js";
-import { appendTaskLog, loadLatestTask, loadTaskJob, persistTaskJob } from "../tasks/store.js";
+import { appendTaskLog, deleteTaskJob, loadLatestTask, loadTaskJob, persistTaskJob } from "../tasks/store.js";
 
 export function taskRoutes(session: SessionManager): Router {
   const router = Router();
@@ -131,6 +131,29 @@ export function taskRoutes(session: SessionManager): Router {
 
       const resumed = taskRuntime.resumeTask(task.id) ?? task;
       res.json({ ok: true, job: resumed });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
+    }
+  });
+
+  router.post("/:id/terminate", (req, res) => {
+    try {
+      ensureRuntimeHydrated(session, req);
+      const runtimeTask = taskRuntime.removeTask(req.params.id);
+      const persisted = loadTaskJob(req.params.id);
+
+      if (!runtimeTask && !persisted) {
+        res.status(404).json({
+          ok: false,
+          error: "NOT_FOUND",
+          message: "Task not found",
+        });
+        return;
+      }
+
+      deleteTaskJob(req.params.id);
+      res.json({ ok: true, job: runtimeTask ?? persisted });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
