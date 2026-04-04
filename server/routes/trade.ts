@@ -32,14 +32,6 @@ function queryParamAsString(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
 
-function logSellPreview(label: string, body: SellPreviewBody, preview: Awaited<ReturnType<typeof previewSellQuantity>>): void {
-  const orderNotional =
-    Number(preview.executable_qty) * Number(preview.symbol.last_price ?? "0");
-  console.log(
-    `[sell-preview:${label}] exchange=${body.account_id} symbol=${body.symbol} base=${body.base_asset} quote=${body.quote_asset} step_amount=${body.step_amount} requested_qty=${preview.requested_qty} executable_qty=${preview.executable_qty} balance=${preview.balance_available} step_size=${preview.symbol.step_size} min_qty=${preview.symbol.min_qty} last_price=${preview.symbol.last_price ?? "0"} notional=${orderNotional} min_quote_amount=${preview.symbol.min_quote_amount ?? "0"} can_execute=${preview.can_execute}`,
-  );
-}
-
 export function tradeRoutes(session: SessionManager): Router {
   const router = Router();
 
@@ -82,7 +74,9 @@ export function tradeRoutes(session: SessionManager): Router {
         throw new Error("account_id and asset query params required");
       }
       const context = validateAutoSellContext(accountId, session, req);
-      const balance = await context.adapter.getBalance(asset, context.creds);
+      const balance = context.adapter.getSpotBalance
+        ? await context.adapter.getSpotBalance(asset, context.creds)
+        : await context.adapter.getBalance(asset, context.creds);
       res.json({ ok: true, balance });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -103,7 +97,6 @@ export function tradeRoutes(session: SessionManager): Router {
       body.interval_sec = parsePositiveInterval(body.interval_sec);
       const context = validateAutoSellContext(body.account_id, session, req);
       const preview = await previewSellQuantity(body, context);
-      logSellPreview("api", body, preview);
       res.json({ ok: true, preview });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -127,7 +120,6 @@ export function tradeRoutes(session: SessionManager): Router {
       payload.interval_sec = parsePositiveInterval(payload.interval_sec);
       const context = validateAutoSellContext(payload.account_id, session, req);
       const preview = await previewSellQuantity(payload, context);
-      logSellPreview("schedule-start", payload, preview);
       if (!preview.can_execute) {
         throw new Error("Current balance or lot size rules do not allow execution");
       }

@@ -19,6 +19,9 @@ export function requestLogger() {
   return (req: Request, res: Response, next: NextFunction) => {
     const start = Date.now();
     res.on("finish", () => {
+      if (res.statusCode < 400) {
+        return;
+      }
       const ms = Date.now() - start;
       console.log(`${req.method} ${req.path} ${res.statusCode} ${ms}ms`);
     });

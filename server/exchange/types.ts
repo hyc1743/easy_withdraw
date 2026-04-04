@@ -87,6 +87,10 @@ export interface ExchangeAdapter {
     symbol: string,
     creds: DecryptedCreds,
   ): Promise<SpotSymbolInfo | null>;
+  getSpotBalance?(
+    currency: string,
+    creds: DecryptedCreds,
+  ): Promise<AssetBalance>;
   placeMarketSellOrder?(
     symbol: string,
     quantity: string,

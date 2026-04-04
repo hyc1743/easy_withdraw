@@ -5,6 +5,8 @@ import type {
   CurrencyInfo,
   DecryptedCreds,
   ExchangeAdapter,
+  MarketSellOrderResult,
+  SpotSymbolInfo,
   WithdrawRequest,
   WithdrawResponse,
 } from "./types.js";
@@ -24,6 +26,66 @@ function sleep(ms: number): Promise<void> {
 
 function hmacHex(payload: string, secret: string): string {
   return crypto.createHmac("sha256", secret).update(payload).digest("hex");
+}
+
+async function bybitPublicRequest(
+  endpoint: string,
+  query?: string,
+): Promise<unknown> {
+  const path = endpoint + (query ? `?${query}` : "");
+  const url = `${BASE_URL}${path}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const resp = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    const text = await resp.text();
+    const data = text ? (JSON.parse(text) as unknown) : {};
+    if (!resp.ok) {
+      const msg = (data as { retMsg?: string }).retMsg ?? resp.statusText;
+      throw new Error(`Bybit API error ${resp.status}: ${msg}`);
+    }
+
+    const wrapped = data as { retCode?: number; retMsg?: string };
+    if ((wrapped.retCode ?? 0) !== 0) {
+      throw new Error(`Bybit API error ${wrapped.retCode}: ${wrapped.retMsg ?? "unknown"}`);
+    }
+
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeBybitSpotStatus(status: string | undefined): string {
+  return status === "Trading" ? "TRADING" : String(status ?? "UNKNOWN").toUpperCase();
+}
+
+function buildBybitSpotSymbolInfo(row: {
+  symbol?: string;
+  status?: string;
+  baseCoin?: string;
+  quoteCoin?: string;
+  lotSizeFilter?: {
+    minOrderQty?: string;
+    basePrecision?: string;
+    minOrderAmt?: string;
+  };
+  lastPrice?: string;
+}): SpotSymbolInfo {
+  return {
+    symbol: row.symbol ?? "",
+    status: normalizeBybitSpotStatus(row.status),
+    base_asset: row.baseCoin ?? "",
+    quote_asset: row.quoteCoin ?? "",
+    min_qty: row.lotSizeFilter?.minOrderQty ?? "0",
+    step_size: row.lotSizeFilter?.basePrecision ?? "0.00000001",
+    min_quote_amount: row.lotSizeFilter?.minOrderAmt ?? "0",
+    last_price: row.lastPrice,
+  };
 }
 
 async function bybitRequest(
@@ -224,6 +286,159 @@ export class BybitAdapter implements ExchangeAdapter {
       available,
       locked,
       total,
+    };
+  }
+
+  async listSpotSymbols(_creds: DecryptedCreds): Promise<SpotSymbolInfo[]> {
+    const raw = await bybitPublicRequest(
+      "/v5/market/instruments-info",
+      "category=spot",
+    );
+    const rows = (raw as {
+      result?: {
+        list?: Array<{
+          symbol?: string;
+          status?: string;
+          baseCoin?: string;
+          quoteCoin?: string;
+          lotSizeFilter?: {
+            minOrderQty?: string;
+            basePrecision?: string;
+            minOrderAmt?: string;
+          };
+        }>;
+      };
+    }).result?.list ?? [];
+
+    return rows
+      .filter((row) => row.symbol && row.baseCoin && row.quoteCoin)
+      .map((row) => buildBybitSpotSymbolInfo(row));
+  }
+
+  async getSpotSymbol(
+    symbol: string,
+    _creds: DecryptedCreds,
+  ): Promise<SpotSymbolInfo | null> {
+    const normalizedSymbol = symbol.toUpperCase();
+    const [instrumentRaw, tickerRaw] = await Promise.all([
+      bybitPublicRequest(
+        "/v5/market/instruments-info",
+        `category=spot&symbol=${encodeURIComponent(normalizedSymbol)}`,
+      ),
+      bybitPublicRequest(
+        "/v5/market/tickers",
+        `category=spot&symbol=${encodeURIComponent(normalizedSymbol)}`,
+      ),
+    ]);
+
+    const instrument = (instrumentRaw as {
+      result?: {
+        list?: Array<{
+          symbol?: string;
+          status?: string;
+          baseCoin?: string;
+          quoteCoin?: string;
+          lotSizeFilter?: {
+            minOrderQty?: string;
+            basePrecision?: string;
+            minOrderAmt?: string;
+          };
+        }>;
+      };
+    }).result?.list?.[0];
+    if (!instrument?.symbol || !instrument.baseCoin || !instrument.quoteCoin) {
+      return null;
+    }
+
+    const ticker = (tickerRaw as {
+      result?: { list?: Array<{ lastPrice?: string }> };
+    }).result?.list?.[0];
+
+    return buildBybitSpotSymbolInfo({
+      ...instrument,
+      lastPrice: ticker?.lastPrice,
+    });
+  }
+
+  async getSpotBalance(currency: string, creds: DecryptedCreds): Promise<AssetBalance> {
+    const query = `accountType=UNIFIED&coin=${encodeURIComponent(currency)}`;
+    const raw = await bybitRequest("GET", "/v5/account/wallet-balance", creds, undefined, query);
+    const row = (raw as {
+      result?: {
+        list?: Array<{
+          coin?: Array<{
+            coin?: string;
+            walletBalance?: string;
+            locked?: string;
+          }>;
+        }>;
+      };
+    }).result?.list?.[0]?.coin?.find((item) => (item.coin ?? "").toUpperCase() === currency.toUpperCase());
+
+    const total = row?.walletBalance ?? "0";
+    const locked = row?.locked ?? "0";
+    const available = (Number(total) - Number(locked)).toString();
+
+    return {
+      currency: currency.toUpperCase(),
+      available,
+      locked,
+      total,
+    };
+  }
+
+  async placeMarketSellOrder(
+    symbol: string,
+    quantity: string,
+    creds: DecryptedCreds,
+  ): Promise<MarketSellOrderResult> {
+    const normalizedSymbol = symbol.toUpperCase();
+    const raw = await bybitRequest("POST", "/v5/order/create", creds, {
+      category: "spot",
+      symbol: normalizedSymbol,
+      side: "Sell",
+      orderType: "Market",
+      qty: quantity,
+      marketUnit: "baseCoin",
+    });
+
+    const orderId = (raw as {
+      result?: { orderId?: string };
+    }).result?.orderId;
+    if (!orderId) {
+      throw new Error("Bybit order creation failed");
+    }
+
+    const detailRaw = await bybitRequest(
+      "GET",
+      "/v5/order/realtime",
+      creds,
+      undefined,
+      `category=spot&symbol=${encodeURIComponent(normalizedSymbol)}&orderId=${encodeURIComponent(orderId)}`,
+    );
+    const detail = (detailRaw as {
+      result?: {
+        list?: Array<{
+          orderId?: string;
+          orderStatus?: string;
+          avgPrice?: string;
+          cumExecQty?: string;
+          cumExecValue?: string;
+        }>;
+      };
+    }).result?.list?.[0];
+
+    return {
+      order_id: orderId,
+      symbol: normalizedSymbol,
+      status: detail?.orderStatus ?? "UNKNOWN",
+      executed_qty: detail?.cumExecQty ?? "0",
+      quote_qty: detail?.cumExecValue ?? "0",
+      avg_price: detail?.avgPrice ?? "0",
+      raw: {
+        create: raw,
+        detail: detailRaw,
+      },
     };
   }
 }

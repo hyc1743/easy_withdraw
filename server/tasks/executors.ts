@@ -242,7 +242,9 @@ export async function previewSellQuantity(
     throw new Error("Trading pair does not match selected base/quote assets");
   }
 
-  const balance = await context.adapter.getBalance(payload.base_asset, context.creds);
+  const balance = context.adapter.getSpotBalance
+    ? await context.adapter.getSpotBalance(payload.base_asset, context.creds)
+    : await context.adapter.getBalance(payload.base_asset, context.creds);
   const requestedQty =
     Number(balance.available) >= Number(payload.step_amount)
       ? payload.step_amount

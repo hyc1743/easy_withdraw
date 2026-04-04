@@ -5,6 +5,8 @@ import type {
   CurrencyInfo,
   DecryptedCreds,
   ExchangeAdapter,
+  MarketSellOrderResult,
+  SpotSymbolInfo,
   WithdrawRequest,
   WithdrawResponse,
 } from "./types.js";
@@ -119,6 +121,63 @@ async function okxRequest(
 function parseDecimalPlaces(num: string): number {
   if (!num.includes(".")) return 0;
   return Math.max(0, num.split(".")[1].replace(/0+$/, "").length);
+}
+
+async function okxPublicRequest(
+  endpoint: string,
+  query?: string,
+): Promise<unknown> {
+  const path = endpoint + (query ? `?${query}` : "");
+  const url = `${BASE_URL}${path}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const resp = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    const text = await resp.text();
+    const data = text ? (JSON.parse(text) as unknown) : {};
+
+    if (!resp.ok) {
+      const msg = (data as { msg?: string }).msg ?? resp.statusText;
+      throw new Error(`OKX API error ${resp.status}: ${msg}`);
+    }
+
+    const wrapped = data as { code?: string; msg?: string };
+    if (wrapped.code && wrapped.code !== "0") {
+      throw new Error(`OKX API error ${wrapped.code}: ${wrapped.msg ?? "unknown"}`);
+    }
+
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeOkxSpotStatus(state: string | undefined): string {
+  return state === "live" ? "TRADING" : String(state ?? "UNKNOWN").toUpperCase();
+}
+
+function buildOkxSpotSymbolInfo(row: {
+  instId?: string;
+  state?: string;
+  baseCcy?: string;
+  quoteCcy?: string;
+  minSz?: string;
+  lotSz?: string;
+  last?: string;
+}): SpotSymbolInfo {
+  return {
+    symbol: row.instId ?? "",
+    status: normalizeOkxSpotStatus(row.state),
+    base_asset: row.baseCcy ?? "",
+    quote_asset: row.quoteCcy ?? "",
+    min_qty: row.minSz ?? "0",
+    step_size: row.lotSz ?? "0.00000001",
+    last_price: row.last,
+  };
 }
 
 function normalizeOkxClientId(raw?: string): string | undefined {
@@ -312,6 +371,158 @@ export class OkxAdapter implements ExchangeAdapter {
       available,
       locked,
       total,
+    };
+  }
+
+  async listSpotSymbols(_creds: DecryptedCreds): Promise<SpotSymbolInfo[]> {
+    const raw = await okxPublicRequest(
+      "/api/v5/public/instruments",
+      "instType=SPOT",
+    );
+    const rows = (raw as {
+      data?: Array<{
+        instId?: string;
+        state?: string;
+        baseCcy?: string;
+        quoteCcy?: string;
+        minSz?: string;
+        lotSz?: string;
+      }>;
+    }).data ?? [];
+
+    return rows
+      .filter((row) => row.instId && row.baseCcy && row.quoteCcy)
+      .map((row) => buildOkxSpotSymbolInfo(row));
+  }
+
+  async getSpotSymbol(
+    symbol: string,
+    _creds: DecryptedCreds,
+  ): Promise<SpotSymbolInfo | null> {
+    const instId = symbol.toUpperCase();
+    const [instrumentRaw, tickerRaw] = await Promise.all([
+      okxPublicRequest(
+        "/api/v5/public/instruments",
+        `instType=SPOT&instId=${encodeURIComponent(instId)}`,
+      ),
+      okxPublicRequest(
+        "/api/v5/market/ticker",
+        `instId=${encodeURIComponent(instId)}`,
+      ),
+    ]);
+
+    const instrument = (instrumentRaw as {
+      data?: Array<{
+        instId?: string;
+        state?: string;
+        baseCcy?: string;
+        quoteCcy?: string;
+        minSz?: string;
+        lotSz?: string;
+      }>;
+    }).data?.[0];
+
+    if (!instrument?.instId || !instrument.baseCcy || !instrument.quoteCcy) {
+      return null;
+    }
+
+    const ticker = (tickerRaw as {
+      data?: Array<{ last?: string }>;
+    }).data?.[0];
+
+    return buildOkxSpotSymbolInfo({
+      ...instrument,
+      last: ticker?.last,
+    });
+  }
+
+  async getSpotBalance(currency: string, creds: DecryptedCreds): Promise<AssetBalance> {
+    const query = `ccy=${encodeURIComponent(currency)}`;
+    const raw = await okxRequest("GET", "/api/v5/account/balance", creds, undefined, query);
+    const row = (raw as {
+      data?: Array<{
+        details?: Array<{
+          ccy?: string;
+          availBal?: string;
+          cashBal?: string;
+          frozenBal?: string;
+        }>;
+      }>;
+    }).data?.[0]?.details?.find((detail) => (detail.ccy ?? "").toUpperCase() === currency.toUpperCase());
+
+    const available = row?.availBal ?? "0";
+    const total = row?.cashBal ?? available;
+    const locked = row?.frozenBal ?? (Number(total) - Number(available)).toString();
+
+    return {
+      currency: currency.toUpperCase(),
+      available,
+      locked,
+      total,
+    };
+  }
+
+  async placeMarketSellOrder(
+    symbol: string,
+    quantity: string,
+    creds: DecryptedCreds,
+  ): Promise<MarketSellOrderResult> {
+    const instId = symbol.toUpperCase();
+    const raw = await okxRequest("POST", "/api/v5/trade/order", creds, {
+      instId,
+      tdMode: "cash",
+      side: "sell",
+      ordType: "market",
+      tgtCcy: "base_ccy",
+      sz: quantity,
+    });
+
+    const order = (raw as {
+      data?: Array<{
+        ordId?: string;
+        sCode?: string;
+        sMsg?: string;
+      }>;
+    }).data?.[0];
+
+    if (!order?.ordId) {
+      throw new Error(order?.sMsg ?? "OKX order creation failed");
+    }
+
+    const detailRaw = await okxRequest(
+      "GET",
+      "/api/v5/trade/order",
+      creds,
+      undefined,
+      `instId=${encodeURIComponent(instId)}&ordId=${encodeURIComponent(order.ordId)}`,
+    );
+    const detail = (detailRaw as {
+      data?: Array<{
+        ordId?: string;
+        state?: string;
+        accFillSz?: string;
+        avgPx?: string;
+      }>;
+    }).data?.[0];
+
+    const executedQty = detail?.accFillSz ?? "0";
+    const avgPrice = detail?.avgPx ?? "0";
+    const quoteQty =
+      Number(executedQty) > 0 && Number(avgPrice) > 0
+        ? (Number(executedQty) * Number(avgPrice)).toString()
+        : "0";
+
+    return {
+      order_id: order.ordId,
+      symbol: instId,
+      status: detail?.state ?? "UNKNOWN",
+      executed_qty: executedQty,
+      quote_qty: quoteQty,
+      avg_price: avgPrice,
+      raw: {
+        create: raw,
+        detail: detailRaw,
+      },
     };
   }
 }

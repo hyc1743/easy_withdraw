@@ -648,7 +648,9 @@ async function loadSellAccountSelect() {
   try {
     const d = await api('GET', '/accounts');
     const sel = $('sell-account');
-    const sellAccounts = d.accounts.filter(a => a.exchange === 'binance' || a.exchange === 'gate');
+    const sellAccounts = d.accounts.filter(a =>
+      ['binance', 'gate', 'okx', 'bybit', 'bitget'].includes(a.exchange),
+    );
     sellAccountExchangeMap = new Map(sellAccounts.map(a => [a.id, a.exchange]));
     sel.innerHTML = '<option value="">选择支持卖出的账户</option>' +
       sellAccounts.map(a => `<option value="${esc(a.id)}">${esc(a.id)} (${esc(a.exchange)})</option>`).join('');

@@ -5,6 +5,8 @@ import type {
   CurrencyInfo,
   DecryptedCreds,
   ExchangeAdapter,
+  MarketSellOrderResult,
+  SpotSymbolInfo,
   WithdrawRequest,
   WithdrawResponse,
 } from "./types.js";
@@ -103,6 +105,39 @@ function parsePrecision(scale: string | undefined): number {
   const n = Number(scale);
   if (Number.isNaN(n) || n < 0) return 8;
   return n;
+}
+
+function precisionToStepSize(precision: number): string {
+  if (!Number.isInteger(precision) || precision <= 0) {
+    return "1";
+  }
+  return `0.${"0".repeat(Math.max(0, precision - 1))}1`;
+}
+
+function normalizeBitgetSpotStatus(status: string | undefined): string {
+  return status === "online" ? "TRADING" : String(status ?? "UNKNOWN").toUpperCase();
+}
+
+function buildBitgetSpotSymbolInfo(row: {
+  symbol?: string;
+  status?: string;
+  baseCoin?: string;
+  quoteCoin?: string;
+  quantityPrecision?: string;
+  minTradeAmount?: string;
+  minTradeUSDT?: string;
+  lastPr?: string;
+}): SpotSymbolInfo {
+  return {
+    symbol: row.symbol ?? "",
+    status: normalizeBitgetSpotStatus(row.status),
+    base_asset: row.baseCoin ?? "",
+    quote_asset: row.quoteCoin ?? "",
+    min_qty: row.minTradeAmount ?? "0",
+    step_size: precisionToStepSize(Number(row.quantityPrecision ?? "8")),
+    min_quote_amount: row.minTradeUSDT ?? "0",
+    last_price: row.lastPr,
+  };
 }
 
 async function getCoinList(): Promise<Array<{
@@ -242,6 +277,128 @@ export class BitgetAdapter implements ExchangeAdapter {
       available,
       locked,
       total: (Number(available) + Number(locked)).toString(),
+    };
+  }
+
+  async listSpotSymbols(_creds: DecryptedCreds): Promise<SpotSymbolInfo[]> {
+    const raw = await bitgetRequest("GET", "/api/v2/spot/public/symbols", null);
+    const rows = (raw as {
+      data?: Array<{
+        symbol?: string;
+        status?: string;
+        baseCoin?: string;
+        quoteCoin?: string;
+        quantityPrecision?: string;
+        minTradeAmount?: string;
+        minTradeUSDT?: string;
+      }>;
+    }).data ?? [];
+
+    return rows
+      .filter((row) => row.symbol && row.baseCoin && row.quoteCoin)
+      .map((row) => buildBitgetSpotSymbolInfo(row));
+  }
+
+  async getSpotSymbol(
+    symbol: string,
+    _creds: DecryptedCreds,
+  ): Promise<SpotSymbolInfo | null> {
+    const normalizedSymbol = symbol.toUpperCase();
+    const [instrumentRaw, tickerRaw] = await Promise.all([
+      bitgetRequest(
+        "GET",
+        "/api/v2/spot/public/symbols",
+        null,
+        undefined,
+        `symbol=${encodeURIComponent(normalizedSymbol)}`,
+      ),
+      bitgetRequest(
+        "GET",
+        "/api/v2/spot/market/tickers",
+        null,
+        undefined,
+        `symbol=${encodeURIComponent(normalizedSymbol)}`,
+      ),
+    ]);
+
+    const instrument = (instrumentRaw as {
+      data?: Array<{
+        symbol?: string;
+        status?: string;
+        baseCoin?: string;
+        quoteCoin?: string;
+        quantityPrecision?: string;
+        minTradeAmount?: string;
+        minTradeUSDT?: string;
+      }>;
+    }).data?.[0];
+    if (!instrument?.symbol || !instrument.baseCoin || !instrument.quoteCoin) {
+      return null;
+    }
+
+    const ticker = (tickerRaw as {
+      data?: Array<{ lastPr?: string }>;
+    }).data?.[0];
+
+    return buildBitgetSpotSymbolInfo({
+      ...instrument,
+      lastPr: ticker?.lastPr,
+    });
+  }
+
+  async getSpotBalance(currency: string, creds: DecryptedCreds): Promise<AssetBalance> {
+    return this.getBalance(currency, creds);
+  }
+
+  async placeMarketSellOrder(
+    symbol: string,
+    quantity: string,
+    creds: DecryptedCreds,
+  ): Promise<MarketSellOrderResult> {
+    const normalizedSymbol = symbol.toUpperCase();
+    const raw = await bitgetRequest("POST", "/api/v2/spot/trade/place-order", creds, {
+      symbol: normalizedSymbol,
+      side: "sell",
+      orderType: "market",
+      force: "gtc",
+      size: quantity,
+    });
+
+    const orderId = (raw as {
+      data?: { orderId?: string };
+    }).data?.orderId;
+    if (!orderId) {
+      throw new Error("Bitget order creation failed");
+    }
+
+    const detailRaw = await bitgetRequest(
+      "GET",
+      "/api/v2/spot/trade/orderInfo",
+      creds,
+      undefined,
+      `symbol=${encodeURIComponent(normalizedSymbol)}&orderId=${encodeURIComponent(orderId)}`,
+    );
+    const detail = (detailRaw as {
+      data?: Array<{
+        orderId?: string;
+        status?: string;
+        priceAvg?: string;
+        baseVolume?: string;
+        quoteVolume?: string;
+      }>;
+    }).data?.[0];
+
+    return {
+      order_id: orderId,
+      symbol: normalizedSymbol,
+      status: detail?.status ?? "UNKNOWN",
+      executed_qty: detail?.baseVolume ?? "0",
+      quote_qty: detail?.quoteVolume ?? "0",
+      avg_price: detail?.priceAvg ?? "0",
+      raw: {
+        create: raw,
+        detail: detailRaw,
+      },
     };
   }
 }
