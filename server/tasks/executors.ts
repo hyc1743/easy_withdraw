@@ -163,9 +163,12 @@ export async function executeWithdrawRequest(
   context: AccountContext,
   idempotencyKey?: string,
 ): Promise<WithdrawResponse> {
+  const shouldInjectClientWithdrawId = context.exchange !== "mexc";
   const effectiveRequest: WithdrawRequest = {
     ...request,
-    client_withdraw_id: request.client_withdraw_id ?? idempotencyKey,
+    client_withdraw_id: request.client_withdraw_id ?? (
+      shouldInjectClientWithdrawId ? idempotencyKey : undefined
+    ),
   };
   await context.adapter.validateRequest(effectiveRequest);
   return context.adapter.withdraw(effectiveRequest, context.creds);

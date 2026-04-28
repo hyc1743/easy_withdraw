@@ -16,3 +16,7 @@ Thumbs.db
 
 # local agent instructions
 AGENTS.md
+
+# local-only project artifacts
+docs/
+tests/

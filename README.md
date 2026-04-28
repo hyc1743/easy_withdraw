@@ -7,11 +7,11 @@
 - 默认监听 `127.0.0.1`（localhost）
 - 主密码加密存储交易所密钥（Argon2id + AES-256-GCM）
 - 基于 SQLite 持久化配置、提现历史、定时任务与日志
-- 支持 Binance 现货按秒间隔自动市价卖出，直到余额卖完
+- 支持 Binance / OKX / Bybit / Gate / Bitget / MEXC 现货按秒间隔自动市价卖出，直到余额卖完
 - 任务完成后，重新进入对应页面仍可查看最近一次任务和执行日志
 - 零前端构建步骤（Tailwind CDN + vanilla JS）
 - 会话空闲 15 分钟自动锁定
-- 目前支持 Gate / Binance / OKX / Bybit / Bitget
+- 目前支持 Gate / Binance / OKX / Bybit / Bitget / MEXC
 
 ## 快速开始
 
@@ -67,7 +67,7 @@ http://<TAILSCALE_IP>:4217
 2. 输入主密码解锁会话
 3. 在「账户」页添加交易所 API Key / Secret（OKX、Bitget 还需 Passphrase）
 4. 在「提现」页填写提现信息，先预校验再执行，或启动定时提现
-5. 在「卖出」页选择 Binance 账户和交易对，预校验后启动自动卖出
+5. 在「卖出」页选择支持现货卖出的账户和交易对，预校验后启动自动卖出
 6. 任务运行期间可关闭前端页面；重新进入后会自动回显当前任务或最近一次同类型任务日志
 6. 在「历史」页查看提现记录
 
@@ -80,7 +80,7 @@ http://<TAILSCALE_IP>:4217
 
 ## 自动卖出说明
 
-- 当前只支持 Binance 现货 `MARKET SELL`
+- 当前支持 Binance / OKX / Bybit / Gate / Bitget / MEXC 现货 `MARKET SELL`
 - 输入交易对后，系统会自动识别卖出币种和目标币种，无需单独填写
 - “预校验”会检查交易对是否存在、当前余额、最小下单量、步进以及本轮可执行数量
 - 若剩余余额小于单次数量，最后一轮会按剩余余额卖出
@@ -89,7 +89,7 @@ http://<TAILSCALE_IP>:4217
 ## 安全建议
 
 - 在交易所侧将 API Key 限制为「只允许提现到白名单地址」
-- Binance 自动卖出需要 API Key 具备现货交易权限
+- 自动卖出需要 API Key 具备现货交易权限
 - 使用强主密码
 - 不要将 `~/.easy_withdraw/` 下的数据库与配置文件上传到公开仓库
 
@@ -109,7 +109,7 @@ server/
   routes/addresses.ts  # 地址簿路由
   routes/templates.ts  # 提现模板路由
   routes/tasks.ts      # 通用任务路由
-  routes/trade.ts      # Binance 自动卖出路由
+  routes/trade.ts      # 现货自动卖出路由
   routes/withdraw.ts   # 提现路由
   exchange/types.ts    # 交易所统一接口
   exchange/gate.ts     # Gate 适配器
@@ -117,6 +117,7 @@ server/
   exchange/okx.ts      # OKX 适配器
   exchange/bybit.ts    # Bybit 适配器
   exchange/bitget.ts   # Bitget 适配器
+  exchange/mexc.ts     # MEXC 适配器
   exchange/adapters.ts # 交易所适配器注册表
 public/
   index.html           # 单页 UI
@@ -151,11 +152,11 @@ public/
 | GET | `/api/withdraw/schedule/:id` | 查询指定定时任务 |
 | GET | `/api/withdraw/history` | 提现历史 |
 | GET | `/api/withdraw/:id` | 查询提现状态 |
-| GET | `/api/trade/binance/symbols` | 列出 Binance 现货交易对 |
-| GET | `/api/trade/binance/symbol/:symbol` | 查询单个 Binance 交易对规则 |
-| GET | `/api/trade/binance/balance` | 查询 Binance 卖出币种余额 |
+| GET | `/api/trade/binance/symbols` | 列出现货交易对（兼容旧 Binance 路径） |
+| GET | `/api/trade/binance/symbol/:symbol` | 查询单个现货交易对规则（兼容旧 Binance 路径） |
+| GET | `/api/trade/binance/balance` | 查询卖出币种余额（兼容旧 Binance 路径） |
 | POST | `/api/trade/sell/preview` | 自动卖出预校验 |
-| POST | `/api/trade/sell/schedule/start` | 启动 Binance 自动卖出 |
+| POST | `/api/trade/sell/schedule/start` | 启动自动卖出 |
 | GET | `/api/tasks/active` | 获取当前运行任务 |
 | GET | `/api/tasks/latest` | 获取最近一条任务，可按类型过滤 |
 | GET | `/api/tasks/:id` | 查询指定任务 |

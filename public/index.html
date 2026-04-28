@@ -64,6 +64,7 @@
         <option value="okx">OKX</option>
         <option value="bybit">Bybit</option>
         <option value="bitget">Bitget</option>
+        <option value="mexc">MEXC</option>
       </select>
       <input id="acct-key" placeholder="API Key" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
       <input id="acct-secret" type="password" placeholder="API Secret" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
@@ -200,7 +201,7 @@
       <div id="sell-symbol-meta" class="text-xs text-gray-400 mb-3">交易对: --</div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <input id="sell-step-amount" type="number" step="any" min="0" placeholder="每次卖出数量" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-        <input id="sell-interval-sec" type="number" min="1" value="60" placeholder="间隔秒数" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <input id="sell-interval-sec" type="number" min="1" value="1" placeholder="间隔秒数" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
       </div>
       <div id="sell-balance" class="text-xs text-gray-400 mb-3">可用余额: --</div>
       <div class="flex flex-col sm:flex-row gap-3 mb-3">
@@ -649,7 +650,7 @@ async function loadSellAccountSelect() {
     const d = await api('GET', '/accounts');
     const sel = $('sell-account');
     const sellAccounts = d.accounts.filter(a =>
-      ['binance', 'gate', 'okx', 'bybit', 'bitget'].includes(a.exchange),
+      ['binance', 'gate', 'okx', 'bybit', 'bitget', 'mexc'].includes(a.exchange),
     );
     sellAccountExchangeMap = new Map(sellAccounts.map(a => [a.id, a.exchange]));
     sel.innerHTML = '<option value="">选择支持卖出的账户</option>' +
@@ -879,7 +880,7 @@ function getSellBody() {
     base_asset: selectedSellSymbol?.base_asset || '',
     quote_asset: selectedSellSymbol?.quote_asset || '',
     step_amount: $('sell-step-amount').value,
-    interval_sec: parseInt($('sell-interval-sec').value, 10) || 60,
+    interval_sec: parseInt($('sell-interval-sec').value, 10) || 1,
   };
 }
 
@@ -1400,7 +1401,11 @@ async function syncSchedule() {
     const withdrawViewActive = $('view-withdraw')?.classList.contains('active');
     if (sellViewActive) {
       const latest = await api('GET', '/tasks/latest?job_type=sell_market');
-      if (latest.job && _dismissedLatestTaskIds[latest.job.job_type] !== latest.job.id) {
+      if (
+        latest.job &&
+        (latest.job.state === 'running' || latest.job.state === 'completed') &&
+        _dismissedLatestTaskIds[latest.job.job_type] !== latest.job.id
+      ) {
         _schCurrentJobId = latest.job.id;
         renderScheduleJob(latest.job);
         if (latest.job.state === 'running') startSchedulePolling();
@@ -1409,7 +1414,11 @@ async function syncSchedule() {
     }
     if (withdrawViewActive) {
       const latest = await api('GET', '/tasks/latest?job_type=withdraw');
-      if (latest.job && _dismissedLatestTaskIds[latest.job.job_type] !== latest.job.id) {
+      if (
+        latest.job &&
+        (latest.job.state === 'running' || latest.job.state === 'completed') &&
+        _dismissedLatestTaskIds[latest.job.job_type] !== latest.job.id
+      ) {
         _schCurrentJobId = latest.job.id;
         renderScheduleJob(latest.job);
         if (latest.job.state === 'running') startSchedulePolling();
