@@ -30,6 +30,12 @@ export interface WithdrawTemplate {
   amount: string;
 }
 
+export interface OnchainWalletConfig {
+  id: string;
+  address: string;
+  private_key_enc: string;
+}
+
 export interface AppConfig {
   version: number;
   security: {
@@ -41,6 +47,8 @@ export interface AppConfig {
   accounts: AccountConfig[];
   address_book: AddressEntry[];
   templates: WithdrawTemplate[];
+  onchain_wallets: OnchainWalletConfig[];
+  layerzero_api_key_enc: string | null;
   settings: {
     host: string;
     port: number;
@@ -77,6 +85,10 @@ export function loadConfig(): AppConfig {
   const cfg = JSON.parse(row.value) as AppConfig;
   if (!cfg.address_book) cfg.address_book = [];
   if (!cfg.templates) cfg.templates = [];
+  if (!cfg.onchain_wallets) cfg.onchain_wallets = [];
+  if ((cfg as Partial<AppConfig>).layerzero_api_key_enc === undefined) {
+    cfg.layerzero_api_key_enc = null;
+  }
   if (!cfg.settings.host) cfg.settings.host = "127.0.0.1";
   return cfg;
 }
@@ -102,6 +114,8 @@ export function ensureConfig(): AppConfig {
     accounts: [],
     address_book: [],
     templates: [],
+    onchain_wallets: [],
+    layerzero_api_key_enc: null,
     settings: {
       host: "127.0.0.1",
       port: 4217,

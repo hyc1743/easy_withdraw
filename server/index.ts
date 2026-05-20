@@ -12,6 +12,9 @@ import { addressRoutes } from "./routes/addresses.js";
 import { templateRoutes } from "./routes/templates.js";
 import { tradeRoutes } from "./routes/trade.js";
 import { taskRoutes } from "./routes/tasks.js";
+import { onchainRoutes } from "./routes/onchain.js";
+import { crosschainRoutes } from "./routes/crosschain.js";
+import { arbitrageRoutes } from "./routes/arbitrage.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -49,6 +52,9 @@ app.use("/api/addresses", requireSession(session), addressRoutes());
 app.use("/api/templates", requireSession(session), templateRoutes());
 app.use("/api/withdraw", requireSession(session), withdrawRoutes(session));
 app.use("/api/trade", requireSession(session), tradeRoutes(session));
+app.use("/api/onchain", requireSession(session), onchainRoutes(session));
+app.use("/api/crosschain", requireSession(session), crosschainRoutes(session));
+app.use("/api/arbitrage", requireSession(session), arbitrageRoutes(session));
 app.use("/api/tasks", requireSession(session), taskRoutes(session));
 
 app.listen(port, host, () => {

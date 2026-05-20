@@ -3,6 +3,7 @@ import type { SessionManager } from "../security.js";
 import { ensureRuntimeHydrated, hydrateTask } from "../tasks/hydration.js";
 import { taskRuntime } from "../tasks/runtime.js";
 import { appendTaskLog, deleteTaskJob, loadLatestTask, loadTaskJob, persistTaskJob } from "../tasks/store.js";
+import type { TaskJobType } from "../tasks/types.js";
 
 export function taskRoutes(session: SessionManager): Router {
   const router = Router();
@@ -19,7 +20,7 @@ export function taskRoutes(session: SessionManager): Router {
 
   router.get("/latest", (req, res) => {
     try {
-      const jobType = req.query.job_type as "withdraw" | "sell_market" | undefined;
+      const jobType = req.query.job_type as TaskJobType | undefined;
       const job = loadLatestTask(jobType);
       res.json({ ok: true, job });
     } catch (error: unknown) {

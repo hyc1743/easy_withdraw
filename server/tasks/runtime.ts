@@ -6,6 +6,7 @@ export interface TaskExecutionResult {
   log?: Omit<TaskLogRecord, "timestamp">;
   complete?: boolean;
   stop?: boolean;
+  next_delay_sec?: number;
 }
 
 type TaskExecutor = (job: TaskJob) => Promise<TaskExecutionResult>;
@@ -116,9 +117,10 @@ export class TaskRuntime {
       };
       this.activeTaskId = this.activeTaskId === entry.job.id ? null : this.activeTaskId;
     } else {
+      const delaySec = result.next_delay_sec ?? entry.job.interval_sec;
       entry.job = {
         ...entry.job,
-        next_run_at: new Date(Date.now() + entry.job.interval_sec * 1000).toISOString(),
+        next_run_at: new Date(Date.now() + delaySec * 1000).toISOString(),
       };
       this.scheduleNextRun(entry.job.id);
     }

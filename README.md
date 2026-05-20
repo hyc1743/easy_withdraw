@@ -8,6 +8,7 @@
 - 主密码加密存储交易所密钥（Argon2id + AES-256-GCM）
 - 基于 SQLite 持久化配置、提现历史、定时任务与日志
 - 支持 Binance / OKX / Bybit / Gate / Bitget / MEXC 现货按秒间隔自动市价卖出，直到余额卖完
+- 支持 CEX 到 DEX 搬砖，以及 DEX 到 CEX 搬砖（链上跨链后转账到交易所充值地址）
 - 任务完成后，重新进入对应页面仍可查看最近一次任务和执行日志
 - 零前端构建步骤（Tailwind CDN + vanilla JS）
 - 会话空闲 15 分钟自动锁定
@@ -66,7 +67,7 @@ http://<TAILSCALE_IP>:4217
 1. 首次访问时设置主密码
 2. 输入主密码解锁会话
 3. 在「账户」页添加交易所 API Key / Secret（OKX、Bitget 还需 Passphrase）
-4. 在「提现」页填写提现信息，先预校验再执行，或启动定时提现
+4. 在「搬砖」页选择 CEX 到 DEX 或 DEX 到 CEX，先预校验再启动任务
 5. 在「卖出」页选择支持现货卖出的账户和交易对，预校验后启动自动卖出
 6. 任务运行期间可关闭前端页面；重新进入后会自动回显当前任务或最近一次同类型任务日志
 6. 在「历史」页查看提现记录
@@ -85,6 +86,12 @@ http://<TAILSCALE_IP>:4217
 - “预校验”会检查交易对是否存在、当前余额、最小下单量、步进以及本轮可执行数量
 - 若剩余余额小于单次数量，最后一轮会按剩余余额卖出
 - 任一执行错误会立即停止任务
+
+## 搬砖说明
+
+- CEX 到 DEX：余额超过阈值后从交易所提现到链上，可叠加自动跨链。
+- DEX 到 CEX：定时扫描源链钱包余额，超过阈值后跨链到目标链，再从目标链钱包转账到手动填写的交易所充值地址。
+- DEX 到 CEX 的完成标准是最终链上转账交易确认，不轮询交易所充值入账。
 
 ## 安全建议
 
@@ -157,6 +164,9 @@ public/
 | GET | `/api/trade/binance/balance` | 查询卖出币种余额（兼容旧 Binance 路径） |
 | POST | `/api/trade/sell/preview` | 自动卖出预校验 |
 | POST | `/api/trade/sell/schedule/start` | 启动自动卖出 |
+| POST | `/api/arbitrage/dex-to-cex/preview` | DEX 到 CEX 搬砖预校验 |
+| POST | `/api/arbitrage/dex-to-cex/start` | 启动 DEX 到 CEX 搬砖 |
+| GET | `/api/arbitrage/dex-to-cex/history` | DEX 到 CEX 充值转账历史 |
 | GET | `/api/tasks/active` | 获取当前运行任务 |
 | GET | `/api/tasks/latest` | 获取最近一条任务，可按类型过滤 |
 | GET | `/api/tasks/:id` | 查询指定任务 |

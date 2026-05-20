@@ -78,6 +78,34 @@ export function deleteTaskJob(jobId: string): void {
   tx(jobId);
 }
 
+export function stopInterruptedRunningTasks(
+  message = "服务重启后检测到任务中断，已停止以避免重复执行",
+): number {
+  const now = new Date().toISOString();
+  const rows = db
+    .prepare("SELECT id FROM schedule_jobs WHERE state = 'running' AND next_run_at IS NULL")
+    .all() as Array<{ id: string }>;
+
+  if (rows.length === 0) return 0;
+
+  const tx = db.transaction((jobIds: string[]) => {
+    const stopTask = db.prepare(
+      "UPDATE schedule_jobs SET state = 'stopped', next_run_at = NULL, updated_at = ? WHERE id = ?",
+    );
+    const insertLog = db.prepare(
+      "INSERT INTO schedule_logs(job_id, timestamp, ok, message) VALUES (?, ?, ?, ?)",
+    );
+
+    for (const id of jobIds) {
+      stopTask.run(now, id);
+      insertLog.run(id, now, 0, message);
+    }
+  });
+  tx(rows.map((row) => row.id));
+
+  return rows.length;
+}
+
 export function persistTaskJob(job: TaskJob): void {
   db.prepare(
     `INSERT INTO schedule_jobs(

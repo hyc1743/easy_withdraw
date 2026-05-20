@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import Database from "better-sqlite3";
-import type { AppConfig, AddressEntry, WithdrawTemplate } from "./config.js";
+import type { AppConfig, AddressEntry, OnchainWalletConfig, WithdrawTemplate } from "./config.js";
 
 interface LegacyConfig {
   version?: number;
@@ -10,6 +10,8 @@ interface LegacyConfig {
   accounts?: AppConfig["accounts"];
   address_book?: AddressEntry[];
   templates?: WithdrawTemplate[];
+  onchain_wallets?: OnchainWalletConfig[];
+  layerzero_api_key_enc?: string | null;
   settings?: AppConfig["settings"];
 }
 
@@ -40,6 +42,8 @@ function defaultConfig(): AppConfig {
     accounts: [],
     address_book: [],
     templates: [],
+    onchain_wallets: [],
+    layerzero_api_key_enc: null,
     settings: {
       host: "127.0.0.1",
       port: 4217,
@@ -55,6 +59,10 @@ function normalizeConfig(raw: LegacyConfig): AppConfig {
   if (Array.isArray(raw.accounts)) cfg.accounts = raw.accounts;
   if (Array.isArray(raw.address_book)) cfg.address_book = raw.address_book;
   if (Array.isArray(raw.templates)) cfg.templates = raw.templates;
+  if (Array.isArray(raw.onchain_wallets)) cfg.onchain_wallets = raw.onchain_wallets;
+  if (raw.layerzero_api_key_enc !== undefined) {
+    cfg.layerzero_api_key_enc = raw.layerzero_api_key_enc;
+  }
   if (raw.settings) {
     cfg.settings = {
       host: raw.settings.host || cfg.settings.host,
@@ -118,6 +126,41 @@ function ensureSchema(conn: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_schedule_logs_job_id_id
       ON schedule_logs(job_id, id DESC);
+
+    CREATE TABLE IF NOT EXISTS crosschain_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL,
+      wallet_id TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      src_chain TEXT NOT NULL,
+      dst_chain TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      source_tx_hash TEXT,
+      destination_tx_hash TEXT,
+      guid TEXT,
+      lz_status TEXT NOT NULL,
+      status TEXT NOT NULL,
+      message TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_crosschain_history_id
+      ON crosschain_history(id DESC);
+
+    CREATE TABLE IF NOT EXISTS deposit_transfer_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL,
+      wallet_id TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      chain TEXT NOT NULL,
+      token_address TEXT NOT NULL,
+      deposit_address TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      tx_hash TEXT NOT NULL,
+      status TEXT NOT NULL,
+      message TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_deposit_transfer_history_id
+      ON deposit_transfer_history(id DESC);
   `);
 
   const scheduleJobColumns = conn

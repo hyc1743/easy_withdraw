@@ -17,8 +17,9 @@
   <span class="text-lg font-bold text-white">Easy Withdraw</span>
   <button onclick="showView('accounts')" class="nav-btn text-gray-400 hover:text-white" id="nav-accounts">账户</button>
   <button onclick="showView('addressbook')" class="nav-btn text-gray-400 hover:text-white" id="nav-addressbook">地址簿</button>
-  <button onclick="showView('withdraw')" class="nav-btn text-gray-400 hover:text-white" id="nav-withdraw">提现</button>
+  <button onclick="showView('withdraw')" class="nav-btn text-gray-400 hover:text-white" id="nav-withdraw">搬砖</button>
   <button onclick="showView('sell')" class="nav-btn text-gray-400 hover:text-white" id="nav-sell">卖出</button>
+  <button onclick="showView('crosschain')" class="nav-btn text-gray-400 hover:text-white" id="nav-crosschain">跨链</button>
   <button onclick="showView('history')" class="nav-btn text-gray-400 hover:text-white" id="nav-history">历史</button>
   <div class="ml-auto">
     <button onclick="doLock()" id="btn-lock" class="text-sm text-red-400 hover:text-red-300 hidden">锁定</button>
@@ -95,6 +96,24 @@
       <button onclick="submitOkxTransfer()" class="bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded text-sm w-full">执行划转</button>
       <div id="okx-transfer-result" class="hidden mt-3 rounded bg-gray-700 p-3 text-sm"></div>
     </div>
+    <div class="bg-gray-800 rounded-lg p-6 mb-4">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="text-sm font-semibold text-white">链上设置</div>
+          <div id="lz-api-status" class="text-xs text-gray-400">LayerZero API Key: --</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+        <input id="lz-api-key" type="password" placeholder="LayerZero API Key" class="md:col-span-2 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <button onclick="saveLayerZeroApiKey()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">保存 API Key</button>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+        <input id="wallet-id" placeholder="钱包 ID (如 peaq_wallet)" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <input id="wallet-private-key" type="password" placeholder="私钥" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <button onclick="saveOnchainWallet()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm">保存钱包</button>
+      </div>
+      <div id="wallet-list" class="text-sm"></div>
+    </div>
     <div id="account-list"></div>
   </div>
 
@@ -114,7 +133,7 @@
 
   <!-- Withdraw View -->
   <div id="view-withdraw" class="view">
-    <h2 class="text-xl font-semibold mb-4">提现</h2>
+    <h2 class="text-xl font-semibold mb-4">搬砖</h2>
     <!-- Template bar -->
     <div class="flex gap-2 mb-4">
       <select id="w-tpl" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
@@ -124,7 +143,11 @@
       <button onclick="saveTemplate()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded text-sm">保存</button>
       <button onclick="deleteTemplate()" class="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded text-sm">删除</button>
     </div>
-    <div class="bg-gray-800 rounded-lg p-6">
+    <div class="flex rounded overflow-hidden border border-gray-700 mb-4">
+      <button onclick="setArbitrageDirection('cex_to_dex')" id="arb-dir-cex-to-dex" class="flex-1 bg-amber-600 text-white py-2 text-sm font-semibold">CEX 到 DEX 搬砖</button>
+      <button onclick="setArbitrageDirection('dex_to_cex')" id="arb-dir-dex-to-cex" class="flex-1 bg-gray-800 text-gray-300 py-2 text-sm font-semibold">DEX 到 CEX 搬砖</button>
+    </div>
+    <div id="cex-to-dex-panel" class="bg-gray-800 rounded-lg p-6">
       <select id="w-account" onchange="onAccountChange()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
         <option value="">选择账户</option>
       </select>
@@ -158,30 +181,141 @@
       <div id="w-submit-warning" class="hidden mb-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
         当前所选网络暂不可用；仍可继续单次提现或定时提现，用于持续重试 API 提交。
       </div>
-      <div class="flex flex-col sm:flex-row gap-3 mb-3">
+      <div class="flex gap-3 mb-3">
         <button onclick="doPreview()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预校验</button>
         <button onclick="doExecute()" class="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-2 rounded text-sm">单次提现</button>
-        <button onclick="toggleSchedulePanel()" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2 rounded text-sm">定时提现</button>
       </div>
-      <!-- Schedule panel -->
-      <div id="schedule-panel" class="hidden bg-gray-700 rounded p-4 mb-3">
+      <!-- 搬砖配置 -->
+      <div class="border-t border-gray-700 pt-4 mt-2 mb-3">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-sm font-semibold text-amber-400">搬砖自动提现</span>
+          <span class="text-xs text-gray-500">(余额超阈值时全额提现，循环执行)</span>
+        </div>
         <div class="flex gap-3 mb-3">
           <div class="flex-1">
-            <label class="text-xs text-gray-400">间隔（秒）</label>
-            <input id="sch-interval" type="number" min="1" value="60" class="w-full bg-gray-600 border border-gray-500 rounded px-3 py-2 text-sm">
+            <label class="text-xs text-gray-400">扫描间隔（秒）</label>
+            <input id="sch-interval" type="number" min="1" value="60" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
           </div>
           <div class="flex-1">
-            <label class="text-xs text-gray-400">次数</label>
-            <input id="sch-count" type="number" min="1" value="5" class="w-full bg-gray-600 border border-gray-500 rounded px-3 py-2 text-sm">
+            <label class="text-xs text-gray-400">触发阈值</label>
+            <input id="arb-threshold" type="number" step="any" min="0" placeholder="余额大于此值时提现" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          </div>
+        </div>
+        <div class="flex items-center gap-2 mb-3">
+          <input type="checkbox" id="arb-crosschain" onchange="onArbitrageCrosschainToggle()" class="w-4 h-4 rounded border-gray-500">
+          <span class="text-sm">叠加自动跨链 <span class="text-xs text-gray-500">(提现到账后自动跨链转账)</span></span>
+        </div>
+        <div id="arb-cc-config" class="hidden mb-3 space-y-2 pl-4 border-l-2 border-amber-600/50">
+          <select id="arb-cc-wallet" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">选择链上钱包</option></select>
+          <div class="flex gap-2">
+            <div class="flex-1 space-y-1">
+              <input id="arb-cc-src-chain-search" oninput="filterCrosschainChainSelect('arb-cc-src-chain', this.value)" placeholder="搜索源链" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+              <select id="arb-cc-src-chain" onchange="discoverArbitrageCrosschainRoutes()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">源链</option></select>
+            </div>
+            <div class="flex-1 space-y-1">
+              <input id="arb-cc-dst-chain-search" oninput="filterCrosschainChainSelect('arb-cc-dst-chain', this.value)" placeholder="搜索目标链" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+              <select id="arb-cc-dst-chain" onchange="updateArbitrageCrosschainRoute()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">目标链</option></select>
+            </div>
+          </div>
+          <input id="arb-cc-token" onblur="discoverArbitrageCrosschainRoutes()" placeholder="源 Token 地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <input id="arb-cc-dst-token" onblur="updateArbitrageCrosschainRoute()" placeholder="目标 Token 地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <input id="arb-cc-recipient" placeholder="目标链收款地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <div class="flex gap-2">
+            <div class="flex items-center gap-1 flex-1 flex-wrap">
+              <span class="text-xs text-gray-400 mr-1">滑点</span>
+              <button type="button" onclick="setArbSlippage(0.5)" class="px-2 py-1 text-xs rounded bg-sky-600 text-white" id="arb-slippage-0.5">0.5%</button>
+              <button type="button" onclick="setArbSlippage(1)" class="px-2 py-1 text-xs rounded bg-gray-700 text-gray-300" id="arb-slippage-1">1%</button>
+              <button type="button" onclick="toggleArbCustomSlippage()" class="px-2 py-1 text-xs rounded bg-gray-700 text-gray-300" id="arb-slippage-custom-btn">自定</button>
+              <button type="button" onclick="setArbSlippage(0)" class="px-2 py-1 text-xs rounded bg-gray-700 text-gray-300" id="arb-slippage-0">Auto</button>
+              <input id="arb-slippage-custom-input" type="number" step="0.1" min="0" max="100" placeholder="%" class="hidden w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
+            </div>
+            <input id="arb-cc-reserve" type="number" step="any" min="0" placeholder="预留币数" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-400">跨链模式</span>
+            <select id="arb-cc-mode" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
+              <option value="api">API</option>
+              <option value="direct">直连</option>
+            </select>
           </div>
         </div>
         <div class="flex gap-3">
-          <button onclick="startSchedule()" id="btn-sch-start" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2 rounded text-sm">开始定时提现</button>
-          <button onclick="stopSchedule()" id="btn-sch-stop" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm hidden">停止提现</button>
+          <button onclick="startArbitrage()" id="btn-arb-start" class="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 rounded text-sm font-semibold">开始搬砖</button>
+          <button onclick="stopActiveTask()" id="btn-arb-stop" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm hidden">停止搬砖</button>
         </div>
         <div id="sch-status" class="mt-3 text-sm hidden"></div>
       </div>
       <div id="w-result" class="mt-4 text-sm hidden bg-gray-700 rounded p-3"></div>
+    </div>
+    <div id="dex-to-cex-panel" class="hidden bg-gray-800 rounded-lg p-6">
+      <div class="text-sm font-semibold text-emerald-400 mb-3">DEX 到 CEX 搬砖</div>
+      <select id="d2c-wallet" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm"><option value="">选择链上钱包</option></select>
+
+      <!-- Direct deposit config (crosschain OFF) -->
+      <div id="d2c-direct-config">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+          <input id="d2c-direct-token" placeholder="Token 合约地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <div class="space-y-1">
+            <input id="d2c-direct-chain-search" oninput="filterCrosschainChainSelect('d2c-direct-chain', this.value)" placeholder="搜索区块链" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+            <select id="d2c-direct-chain" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">选择区块链</option></select>
+          </div>
+        </div>
+        <input id="d2c-symbol" placeholder="币种符号，如 USDT" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+        <input id="d2c-deposit-address" placeholder="CEX 充值地址 (EVM)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+          <input id="d2c-threshold" type="number" step="any" min="0" placeholder="触发阈值" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <input id="d2c-reserve" type="number" step="any" min="0" placeholder="预留币数" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <input id="d2c-interval" type="number" min="1" value="60" placeholder="扫描间隔秒" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        </div>
+      </div>
+
+      <!-- Crosschain config (crosschain ON) -->
+      <div id="d2c-cc-config" class="hidden">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+          <div class="space-y-1">
+            <input id="d2c-src-chain-search" oninput="filterCrosschainChainSelect('d2c-src-chain', this.value)" placeholder="搜索源链" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+            <select id="d2c-src-chain" onchange="discoverDexToCexRoutes()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">源链</option></select>
+          </div>
+          <div class="space-y-1">
+            <input id="d2c-dst-chain-search" oninput="filterCrosschainChainSelect('d2c-dst-chain', this.value)" placeholder="搜索目标链" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+            <select id="d2c-dst-chain" onchange="updateDexToCexRoute()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">目标链</option></select>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+          <input id="d2c-token" onblur="discoverDexToCexRoutes()" placeholder="源 Token 地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <input id="d2c-dst-token" onblur="updateDexToCexRoute()" placeholder="目标 Token 地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        </div>
+        <input id="d2c-symbol-cc" placeholder="币种符号，如 USDT" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+        <input id="d2c-deposit-address-cc" placeholder="CEX 充值地址 (EVM)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+          <input id="d2c-threshold-cc" type="number" step="any" min="0" placeholder="触发阈值" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <input id="d2c-reserve-cc" type="number" step="any" min="0" placeholder="预留币数" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <input id="d2c-interval-cc" type="number" min="1" value="60" placeholder="扫描间隔秒" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        </div>
+        <div class="flex flex-wrap items-center gap-2 mb-3">
+          <span class="text-xs text-gray-400">滑点</span>
+          <button type="button" onclick="setD2cSlippage(0.5)" class="px-2 py-1 text-xs rounded bg-sky-600 text-white" id="d2c-slippage-0.5">0.5%</button>
+          <button type="button" onclick="setD2cSlippage(1)" class="px-2 py-1 text-xs rounded bg-gray-700 text-gray-300" id="d2c-slippage-1">1%</button>
+          <button type="button" onclick="setD2cSlippage(0)" class="px-2 py-1 text-xs rounded bg-gray-700 text-gray-300" id="d2c-slippage-0">Auto</button>
+          <span class="text-xs text-gray-400 ml-3">跨链模式</span>
+          <select id="d2c-mode" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
+            <option value="api">API</option>
+            <option value="direct">直连</option>
+          </select>
+        </div>
+        <div id="d2c-route-meta" class="text-xs text-gray-400 mb-3">路线: --</div>
+      </div>
+
+      <div class="flex items-center gap-2 mb-3">
+        <input type="checkbox" id="d2c-crosschain" onchange="onD2cCrosschainToggle()" class="w-4 h-4 rounded border-gray-500">
+        <span class="text-sm">叠加自动跨链 <span class="text-xs text-gray-500">(跨链到目标链后再充值到 CEX)</span></span>
+      </div>
+      <div class="flex gap-3">
+        <button onclick="previewDexToCexArbitrage()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预校验</button>
+        <button onclick="startDexToCexArbitrage()" id="btn-d2c-start" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded text-sm font-semibold">开始 DEX 到 CEX</button>
+        <button onclick="stopActiveTask()" id="btn-d2c-stop" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm hidden">停止搬砖</button>
+      </div>
+      <div id="d2c-result" class="hidden mt-4 text-sm bg-gray-700 rounded p-3"></div>
     </div>
   </div>
 
@@ -213,6 +347,119 @@
     </div>
   </div>
 
+  <!-- Crosschain View -->
+  <div id="view-crosschain" class="view">
+    <h2 class="text-xl font-semibold mb-4">自动跨链</h2>
+    <div class="bg-gray-800 rounded-lg p-4 md:p-6 mb-4">
+      <div class="max-w-3xl mx-auto">
+        <div id="cc-from-panel" class="rounded-lg border border-gray-700 bg-gray-900/70 p-4 md:p-5">
+          <div class="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <div class="text-lg font-semibold text-white">From</div>
+              <div class="text-xs font-semibold text-sky-300">源链 Source Chain</div>
+            </div>
+            <select id="cc-wallet" class="w-48 max-w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm">
+              <option value="">选择链上钱包</option>
+            </select>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label class="block">
+              <span class="block text-xs text-gray-400 mb-1">源链</span>
+              <input id="cc-src-chain-search" oninput="filterCrosschainChainSelect('cc-src-chain', this.value)" placeholder="搜索源链" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 mb-2 text-sm">
+              <select id="cc-src-chain" onchange="discoverCrosschainRoutes()" class="w-full bg-gray-800 border border-sky-500/60 rounded px-3 py-2 text-sm">
+                <option value="peaq">peaq</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="block text-xs text-gray-400 mb-1">源 Token 地址</span>
+              <input id="cc-token-address" onblur="discoverCrosschainRoutes()" placeholder="0x..." class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm">
+            </label>
+            <label class="block md:col-span-2">
+              <span class="block text-xs text-gray-400 mb-1">数量</span>
+              <input id="cc-amount" type="number" step="any" min="0" placeholder="0.00" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-3 text-lg">
+            </label>
+            <label class="block md:col-span-2 flex items-center gap-2 -mt-2">
+              <input type="checkbox" id="cc-dynamic-amount" onchange="onDynamicAmountToggle()" class="w-4 h-4 rounded border-gray-600">
+              <span class="text-sm text-amber-400">扫链模式 <span class="text-xs text-gray-500">(自动读取链上余额，全量跨链)</span></span>
+            </label>
+            <label id="cc-reserve-row" class="hidden block md:col-span-2">
+              <span class="block text-xs text-gray-400 mb-1">预留币数 <span class="text-xs text-gray-500">(可选，链上保留不跨链)</span></span>
+              <input id="cc-reserve-amount" type="number" step="any" min="0" placeholder="0 = 全部发送" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm">
+            </label>
+          </div>
+        </div>
+
+        <div class="relative flex justify-center -my-3 z-10">
+          <div class="h-10 w-10 rounded-full border border-gray-700 bg-gray-800 flex items-center justify-center text-gray-300 shadow">
+            ⇅
+          </div>
+        </div>
+
+        <div id="cc-to-panel" class="rounded-lg border border-gray-700 bg-gray-900/70 p-4 md:p-5 mb-4">
+          <div class="mb-4">
+            <div class="text-lg font-semibold text-white">To</div>
+            <div class="text-xs font-semibold text-emerald-300">目标链 Destination Chain</div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label class="block">
+              <span class="block text-xs text-gray-400 mb-1">目标链</span>
+              <input id="cc-dst-chain-search" oninput="filterCrosschainChainSelect('cc-dst-chain', this.value, getCrosschainDestinationChains())" placeholder="搜索目标链" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 mb-2 text-sm">
+              <select id="cc-dst-chain" onchange="updateCrosschainRoutes()" class="w-full bg-gray-800 border border-emerald-500/60 rounded px-3 py-2 text-sm">
+                <option value="bsc">bsc</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="block text-xs text-gray-400 mb-1">目标 Token 地址</span>
+              <input id="cc-dst-token-address" onblur="updateCrosschainRoutes()" placeholder="0x..." class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm">
+            </label>
+            <label class="block md:col-span-2">
+              <span class="block text-xs text-gray-400 mb-1">目标链收款地址</span>
+              <select id="cc-recipient-book" onchange="pickCrosschainAddress()" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 mb-2 text-sm">
+                <option value="">从地址簿选择</option>
+              </select>
+              <input id="cc-recipient" placeholder="0x..." class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm">
+            </label>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-2">
+          <input id="cc-interval" type="number" min="1" value="60" placeholder="间隔秒数" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <input id="cc-count" type="number" min="1" value="1" placeholder="次数" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-400">滑点</span>
+            <button onclick="setSlippage(0.5)" class="px-2 py-1 text-xs rounded bg-sky-600 text-white" id="slippage-0.5">0.5%</button>
+            <button onclick="setSlippage(1)" class="px-2 py-1 text-xs rounded bg-gray-700 text-gray-300" id="slippage-1">1%</button>
+            <button onclick="toggleCustomSlippage()" class="px-2 py-1 text-xs rounded bg-gray-700 text-gray-300" id="slippage-custom">自定</button>
+            <input id="cc-slippage-custom" type="number" step="0.1" min="0" max="100" placeholder="%" class="hidden w-20 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
+            <button onclick="setSlippage(0)" class="px-2 py-1 text-xs rounded bg-gray-700 text-gray-300" id="slippage-0">Auto</button>
+          </div>
+        </div>
+        <div class="flex items-center gap-3 mb-3">
+          <span class="text-xs text-gray-400">跨链模式</span>
+          <div class="flex rounded overflow-hidden border border-gray-600">
+            <button onclick="setCrosschainMode('api')" id="cc-mode-api" class="px-3 py-1 text-xs bg-blue-600 text-white">API</button>
+            <button onclick="setCrosschainMode('direct')" id="cc-mode-direct" class="px-3 py-1 text-xs bg-gray-700 text-gray-300">直连</button>
+          </div>
+          <span id="cc-mode-desc" class="text-xs text-gray-500">需 LayerZero API Key</span>
+        </div>
+      </div>
+      <div id="cc-route-meta" class="text-xs text-gray-400 mb-3">路线: --</div>
+      <div id="cc-route-list" class="text-xs text-gray-300 mb-3 rounded border border-gray-700 bg-gray-900/60 p-3">可用路线: 输入源链和源 Token 后点击查询路线</div>
+      <div id="cc-defaults-meta" class="text-xs text-gray-400 mb-3">推荐参数: 预览时由 quote 返回费用；gas fee 和预计到账以 quote 返回为准</div>
+      <div class="flex flex-col sm:flex-row gap-3">
+        <button onclick="loadCrosschainOfts()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded text-sm">查询路线</button>
+        <button onclick="previewCrosschain()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预览</button>
+        <button onclick="executeCrosschain()" class="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-2 rounded text-sm">单次跨链</button>
+        <button onclick="scheduleCrosschain()" id="cc-auto-btn" class="flex-1 bg-gray-700 text-gray-500 py-2 rounded text-sm cursor-not-allowed" disabled>自动跨链</button>
+      </div>
+      <div id="cc-result" class="hidden mt-4 text-sm bg-gray-700 rounded p-3"></div>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-6">
+      <h3 class="text-sm font-semibold mb-3 text-gray-300">跨链历史</h3>
+      <div id="cc-history-list"></div>
+    </div>
+  </div>
+
   <!-- History View -->
   <div id="view-history" class="view">
     <h2 class="text-xl font-semibold mb-4">提现历史</h2>
@@ -221,6 +468,10 @@
       <button onclick="loadHistory(historyOffset - 20)" id="hist-prev" class="bg-gray-700 hover:bg-gray-600 px-4 py-1.5 rounded text-sm hidden">上一页</button>
       <button onclick="loadHistory(historyOffset + 20)" id="hist-next" class="bg-gray-700 hover:bg-gray-600 px-4 py-1.5 rounded text-sm hidden">下一页</button>
     </div>
+    <h2 class="text-xl font-semibold mt-8 mb-4">跨链历史</h2>
+    <div id="history-crosschain-list"></div>
+    <h2 class="text-xl font-semibold mt-8 mb-4">DEX 到 CEX 充值历史</h2>
+    <div id="history-deposit-transfer-list"></div>
   </div>
   </div>
 
@@ -263,6 +514,7 @@
         <button onclick="resumeActiveTask()" id="btn-prog-resume" class="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded text-sm hidden">继续任务</button>
       </div>
       <button onclick="terminateActiveTask()" id="btn-prog-terminate" class="w-full bg-gray-700 hover:bg-gray-600 text-white py-2 rounded text-sm mb-3 hidden">取消当前任务</button>
+      <div id="prog-links" class="hidden mb-3 text-xs flex flex-wrap gap-2"></div>
       <h4 class="text-xs font-semibold text-gray-400 mb-2">执行日志</h4>
       <div id="prog-log" class="space-y-1 max-h-96 overflow-y-auto text-xs"></div>
     </div>
@@ -284,7 +536,99 @@ let _lastRenderedTask = null;
 let _dismissedLatestTaskIds = {
   withdraw: null,
   sell_market: null,
+  crosschain_oft: null,
+  arbitrage: null,
+  dex_to_cex_arbitrage: null,
 };
+let crosschainWallets = [];
+let crosschainRoutes = [];
+let selectedCrosschainRoute = null;
+let lastCrosschainAutoDstToken = '';
+let arbitrageCrosschainRoutes = [];
+let selectedArbitrageCrosschainRoute = null;
+let lastArbitrageAutoDstToken = '';
+let dexToCexRoutes = [];
+let selectedDexToCexRoute = null;
+let lastDexToCexAutoDstToken = '';
+let currentArbitrageDirection = 'cex_to_dex';
+let currentD2cSlippagePct = 0.5;
+let selectedCrosschainMode = 'api';
+let currentSlippagePct = 0.5;
+
+function setSlippage(pct) {
+  currentSlippagePct = pct;
+  document.getElementById('cc-slippage-custom').classList.add('hidden');
+  [0, 0.5, 1].forEach(v => {
+    const el = document.getElementById(`slippage-${v}`);
+    if (el) el.className =
+      `px-2 py-1 text-xs rounded ${v === pct ? 'bg-sky-600 text-white' : 'bg-gray-700 text-gray-300'}`;
+  });
+  document.getElementById('slippage-custom').className = 'px-2 py-1 text-xs rounded bg-gray-700 text-gray-300';
+}
+
+function toggleCustomSlippage() {
+  const input = document.getElementById('cc-slippage-custom');
+  input.classList.toggle('hidden');
+  if (!input.classList.contains('hidden')) {
+    input.value = '';
+    input.focus();
+    [0, 0.5, 1].forEach(v => {
+      const el = document.getElementById(`slippage-${v}`);
+      if (el) el.className = 'px-2 py-1 text-xs rounded bg-gray-700 text-gray-300';
+    });
+    document.getElementById('slippage-custom').className = 'px-2 py-1 text-xs rounded bg-sky-600 text-white';
+  }
+}
+
+function getSlippageBps() {
+  const customInput = document.getElementById('cc-slippage-custom');
+  if (!customInput.classList.contains('hidden') && customInput.value) {
+    return Math.round(parseFloat(customInput.value) * 100) || 50;
+  }
+  return Math.round(currentSlippagePct * 100);
+}
+
+function onDynamicAmountToggle() {
+  const dynamic = document.getElementById('cc-dynamic-amount').checked;
+  const amountInput = document.getElementById('cc-amount');
+  const countInput = document.getElementById('cc-count');
+  const autoBtn = document.getElementById('cc-auto-btn');
+  const reserveRow = document.getElementById('cc-reserve-row');
+  amountInput.disabled = dynamic;
+  countInput.disabled = dynamic;
+  if (dynamic) {
+    amountInput.placeholder = '自动读取链上余额';
+    amountInput.value = '';
+    countInput.value = '0';
+    countInput.placeholder = '无限 (扫链)';
+    autoBtn.disabled = false;
+    autoBtn.className = 'flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2 rounded text-sm';
+    reserveRow.classList.remove('hidden');
+  } else {
+    amountInput.placeholder = '0.00';
+    countInput.placeholder = '次数';
+    countInput.value = '1';
+    autoBtn.disabled = true;
+    autoBtn.className = 'flex-1 bg-gray-700 text-gray-500 py-2 rounded text-sm cursor-not-allowed';
+    reserveRow.classList.add('hidden');
+  }
+}
+
+function setCrosschainMode(mode) {
+  selectedCrosschainMode = mode;
+  document.getElementById('cc-mode-api').className = mode === 'api'
+    ? 'px-3 py-1 text-xs bg-blue-600 text-white'
+    : 'px-3 py-1 text-xs bg-gray-700 text-gray-300';
+  document.getElementById('cc-mode-direct').className = mode === 'direct'
+    ? 'px-3 py-1 text-xs bg-blue-600 text-white'
+    : 'px-3 py-1 text-xs bg-gray-700 text-gray-300';
+  document.getElementById('cc-mode-desc').textContent = mode === 'direct'
+    ? '直接调用链上合约，无需 API Key'
+    : '需 LayerZero API Key';
+}
+
+let crosschainChains = [];
+let crosschainAddressBook = [];
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
@@ -318,7 +662,7 @@ function toast(msg, ok = true) {
 }
 
 function syncUnlockedUI() {
-  const navs = ['accounts', 'addressbook', 'withdraw', 'sell', 'history'];
+  const navs = ['accounts', 'addressbook', 'withdraw', 'sell', 'crosschain', 'history'];
   navs.forEach((name) => {
     const btn = $('nav-' + name);
     if (!btn) return;
@@ -341,10 +685,15 @@ function showView(name) {
   if (name === 'addressbook') loadAddresses();
   if (name === 'withdraw') {
     loadAccountSelect();
+    if (currentArbitrageDirection === 'dex_to_cex') populateDexToCexSelects();
     syncSchedule();
   }
   if (name === 'sell') {
     loadSellAccountSelect();
+    syncSchedule();
+  }
+  if (name === 'crosschain') {
+    loadCrosschainSetup();
     syncSchedule();
   }
   if (name === 'history') loadHistory(0);
@@ -433,6 +782,7 @@ function closeOkxTransferForm() {
 
 async function loadAccounts() {
   try {
+    loadOnchainSettings();
     const d = await api('GET', '/accounts');
     const el = $('account-list');
     if (!d.accounts.length) { el.innerHTML = '<p class="text-gray-500 text-sm">暂无账户</p>'; return; }
@@ -449,6 +799,63 @@ async function loadAccounts() {
           <button onclick="deleteAccount('${esc(a.id)}')" class="text-red-400 hover:text-red-300 text-sm">删除</button>
         </div>
       </div>`).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadOnchainSettings() {
+  try {
+    const [settings, wallets] = await Promise.all([
+      api('GET', '/onchain/settings'),
+      api('GET', '/onchain/wallets'),
+    ]);
+    crosschainChains = settings.settings?.chains || [];
+    crosschainWallets = wallets.wallets || [];
+    $('lz-api-status').textContent = `LayerZero API Key: ${settings.settings?.has_layerzero_api_key ? '已保存' : '未保存'}`;
+    const list = $('wallet-list');
+    if (!crosschainWallets.length) {
+      list.innerHTML = '<div class="text-gray-500 text-sm">暂无链上钱包</div>';
+    } else {
+      list.innerHTML = crosschainWallets.map(w => `
+        <div class="flex justify-between gap-3 border-t border-gray-700 py-2">
+          <div>
+            <span class="font-medium">${esc(w.id)}</span>
+            <span class="text-gray-400 text-xs ml-2 break-all">${esc(w.address)}</span>
+          </div>
+          <button onclick="deleteOnchainWallet('${esc(w.id)}')" class="text-red-400 hover:text-red-300 text-sm">删除</button>
+        </div>
+      `).join('');
+    }
+  } catch (e) { toast(e.message, false); }
+}
+
+async function saveLayerZeroApiKey() {
+  try {
+    await api('PUT', '/onchain/settings', { layerzero_api_key: $('lz-api-key').value });
+    $('lz-api-key').value = '';
+    toast('LayerZero API Key 已保存');
+    loadOnchainSettings();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function saveOnchainWallet() {
+  try {
+    await api('POST', '/onchain/wallets', {
+      id: $('wallet-id').value,
+      private_key: $('wallet-private-key').value,
+    });
+    $('wallet-id').value = '';
+    $('wallet-private-key').value = '';
+    toast('链上钱包已保存');
+    loadOnchainSettings();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function deleteOnchainWallet(id) {
+  if (!confirm('确定删除链上钱包 ' + id + '？')) return;
+  try {
+    await api('DELETE', '/onchain/wallets/' + encodeURIComponent(id));
+    toast('链上钱包已删除');
+    loadOnchainSettings();
   } catch (e) { toast(e.message, false); }
 }
 
@@ -920,6 +1327,330 @@ async function startSellTask() {
   }
 }
 
+// ---- Crosschain OFT ----
+async function loadCrosschainSetup() {
+  try {
+    const [settings, wallets] = await Promise.all([
+      api('GET', '/onchain/settings'),
+      api('GET', '/onchain/wallets'),
+    ]);
+    crosschainChains = settings.settings?.chains || [];
+    crosschainWallets = wallets.wallets || [];
+    $('cc-wallet').innerHTML = '<option value="">选择链上钱包</option>' +
+      crosschainWallets.map(w => `<option value="${esc(w.id)}">${esc(w.id)} (${esc(w.address.slice(0, 6))}...${esc(w.address.slice(-4))})</option>`).join('');
+    fillCrosschainChainSelects();
+    if (!$('cc-recipient').value && crosschainWallets[0]?.address) {
+      $('cc-recipient').value = crosschainWallets[0].address;
+    }
+    await loadCrosschainAddressBook();
+    await discoverCrosschainRoutes(false);
+    await loadCrosschainHistory();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadCrosschainAddressBook() {
+  try {
+    const d = await api('GET', '/addresses');
+    crosschainAddressBook = d.addresses || [];
+    const select = $('cc-recipient-book');
+    if (!select) return;
+    select.innerHTML = '<option value="">从地址簿选择</option>' +
+      crosschainAddressBook.map((a, i) => `<option value="${i}">${esc(a.label)} (${esc(a.address.slice(0, 6))}...${esc(a.address.slice(-4))})</option>`).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+function pickCrosschainAddress() {
+  const idx = parseInt($('cc-recipient-book').value, 10);
+  const a = crosschainAddressBook[idx];
+  if (!a) return;
+  $('cc-recipient').value = a.address;
+}
+
+function sortCrosschainChains(chains) {
+  return [...(chains || [])].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+}
+
+function getCrosschainChainLabel(chain) {
+  return chain?.label && chain.label !== chain.name
+    ? `${chain.name} - ${chain.label}`
+    : (chain?.name || '');
+}
+
+function getCrosschainDestinationChains() {
+  if (!crosschainRoutes.length) return sortCrosschainChains(crosschainChains);
+  const routesForSrc = crosschainRoutes.filter(r => r.srcChain === $('cc-src-chain').value);
+  const routes = routesForSrc.length ? routesForSrc : crosschainRoutes;
+  const knownChains = new Map(crosschainChains.map(c => [c.name, c]));
+  return sortCrosschainChains(
+    [...new Set(routes.map(r => r.dstChain))].map(name => knownChains.get(name) || { name, label: name }),
+  );
+}
+
+function renderCrosschainChainSelect(selectId, chains, selectedValue = '') {
+  const select = $(selectId);
+  if (!select) return;
+  const sorted = sortCrosschainChains(chains);
+  select.innerHTML = sorted.map(c => `<option value="${esc(c.name)}">${esc(getCrosschainChainLabel(c))}</option>`).join('');
+  if (selectedValue && sorted.some(c => c.name === selectedValue)) {
+    select.value = selectedValue;
+  } else if (!select.value && sorted[0]) {
+    select.value = sorted[0].name;
+  }
+}
+
+function filterCrosschainChainSelect(selectId, query, chains = crosschainChains) {
+  const select = $(selectId);
+  if (!select) return;
+  const previous = select.value;
+  const normalized = String(query || '').trim().toLowerCase();
+  const filtered = sortCrosschainChains(chains).filter(c => {
+    const haystack = `${c.name || ''} ${c.label || ''}`.toLowerCase();
+    return !normalized || haystack.includes(normalized);
+  });
+  renderCrosschainChainSelect(selectId, filtered.length ? filtered : chains, previous);
+  if (select.value !== previous) {
+    select.dispatchEvent(new Event('change'));
+  }
+}
+
+function fillCrosschainChainSelects() {
+  const chains = sortCrosschainChains(crosschainChains);
+  if (!chains.length) return;
+  renderCrosschainChainSelect('cc-src-chain', chains, chains.some(c => c.name === 'peaq') ? 'peaq' : chains[0]?.name || '');
+  renderCrosschainChainSelect('cc-dst-chain', chains, chains.some(c => c.name === 'bsc') ? 'bsc' : chains[1]?.name || chains[0]?.name || '');
+}
+
+async function loadCrosschainOfts(showToast = true) {
+  return discoverCrosschainRoutes(showToast);
+}
+
+async function discoverCrosschainRoutes(showToast = true) {
+  try {
+    const tokenAddress = $('cc-token-address').value.trim();
+    const srcChain = $('cc-src-chain').value;
+    if (!tokenAddress || !srcChain) {
+      crosschainRoutes = [];
+      updateCrosschainRoutes();
+      return;
+    }
+    const d = await api('GET', `/crosschain/routes?src_chain=${encodeURIComponent(srcChain)}&token_address=${encodeURIComponent(tokenAddress)}`);
+    crosschainRoutes = d.routes || [];
+    updateCrosschainRoutes();
+    if (showToast) toast('跨链路线已更新');
+  } catch (e) {
+    $('cc-route-meta').textContent = '路线: 查询失败';
+    if (showToast) toast(e.message, false);
+  }
+}
+
+function updateCrosschainRoutes() {
+  if (!crosschainRoutes.length) {
+    selectedCrosschainRoute = null;
+    lastCrosschainAutoDstToken = '';
+    $('cc-route-meta').textContent = '路线: 预览时由 Stargate / Value Transfer quote 返回';
+    renderCrosschainRouteDetails([]);
+    return;
+  }
+  const routesForSrc = crosschainRoutes.filter(r => r.srcChain === $('cc-src-chain').value);
+  const routes = routesForSrc.length ? routesForSrc : crosschainRoutes;
+  const chains = getCrosschainDestinationChains();
+  if (chains.length) {
+    const prevDst = $('cc-dst-chain').value;
+    renderCrosschainChainSelect('cc-dst-chain', chains, prevDst);
+    if (!$('cc-dst-chain').value || !chains.some(c => c.name === $('cc-dst-chain').value)) {
+      $('cc-dst-chain').value = chains.some(c => c.name === 'bsc') ? 'bsc' : chains.find(c => c.name !== $('cc-src-chain').value)?.name || chains[0].name;
+    }
+  }
+  const dstTokenAddress = $('cc-dst-token-address')?.value.trim().toLowerCase() || '';
+  selectedCrosschainRoute =
+    routes.find(r => r.dstChain === $('cc-dst-chain').value && (
+      !dstTokenAddress ||
+      r.dstDeployment?.address?.toLowerCase() === dstTokenAddress ||
+      r.dstDeployment?.innerTokenAddress?.toLowerCase() === dstTokenAddress
+    )) ||
+    routes.find(r => r.dstChain === $('cc-dst-chain').value) ||
+    routes[0] ||
+    null;
+  const src = selectedCrosschainRoute?.srcDeployment;
+  const dst = selectedCrosschainRoute?.dstDeployment;
+  const dstTokenInput = $('cc-dst-token-address');
+  const suggestedToken = dst?.innerTokenAddress || dst?.address || '';
+  const currentDstToken = dstTokenInput.value.trim();
+  if (selectedCrosschainRoute && suggestedToken && (!currentDstToken || currentDstToken === lastCrosschainAutoDstToken)) {
+    dstTokenInput.value = suggestedToken;
+    lastCrosschainAutoDstToken = suggestedToken;
+  }
+  $('cc-route-meta').textContent = selectedCrosschainRoute && src && dst
+    ? `路线: ${selectedCrosschainRoute.symbol} ${selectedCrosschainRoute.srcChain} -> ${selectedCrosschainRoute.dstChain} ｜ 源 ${src.address} ｜ 目标 ${dst.address}`
+    : '路线: --';
+  renderCrosschainRouteDetails(routes);
+  applyCrosschainRecommendedDefaults();
+}
+
+function renderCrosschainRouteDetails(routes) {
+  const el = $('cc-route-list');
+  if (!el) return;
+  if (!routes.length) {
+    el.innerHTML = '可用路线: 未查询到 route hint；最终可执行路径以预览 quote 返回为准。';
+    return;
+  }
+  el.innerHTML = `
+    <div class="font-semibold text-gray-200 mb-2">可用路线 (${routes.length})</div>
+    <div class="space-y-2">
+      ${routes.map((r) => {
+        const src = r.srcDeployment || {};
+        const dst = r.dstDeployment || {};
+        const active = selectedCrosschainRoute === r ? ' border-emerald-500/60 bg-emerald-950/20' : ' border-gray-700 bg-gray-800/50';
+        return `
+          <div class="rounded border${active} p-2">
+            <div class="text-gray-100">${esc(r.symbol || 'TRANSFER')} ｜ ${esc(r.srcChain)} -> ${esc(r.dstChain)}</div>
+            <div class="text-gray-400 break-all">源 Token: ${esc(src.innerTokenAddress || src.address || '--')}</div>
+            <div class="text-gray-400 break-all">目标 Token: ${esc(dst.innerTokenAddress || dst.address || '--')}</div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function applyCrosschainRecommendedDefaults() {
+  if (!selectedCrosschainRoute) {
+    $('cc-defaults-meta').textContent = '推荐参数: 预览时由 quote 返回费用；高级参数默认留空';
+    return;
+  }
+  $('cc-defaults-meta').textContent =
+    '滑点默认 0.5%；gas fee / native fee 以预览 quote 返回为准';
+}
+
+function getCrosschainBody() {
+  const dynamicAmount = $('cc-dynamic-amount')?.checked;
+  const body = {
+    wallet_id: $('cc-wallet').value,
+    symbol: selectedCrosschainRoute?.symbol || 'TRANSFER',
+    src_chain: $('cc-src-chain').value,
+    dst_chain: $('cc-dst-chain').value,
+    token_address: selectedCrosschainRoute?.srcDeployment?.address || $('cc-token-address').value.trim(),
+    dst_token_address: selectedCrosschainRoute?.dstDeployment?.address || $('cc-dst-token-address').value.trim(),
+    amount: dynamicAmount ? '0' : $('cc-amount').value,
+    recipient: $('cc-recipient').value.trim(),
+    slippage_bps: getSlippageBps(),
+  };
+  if (dynamicAmount) body.dynamic_amount = true;
+  if (selectedCrosschainMode === 'direct') body.mode = 'direct';
+  const reserveVal = $('cc-reserve-amount')?.value;
+  if (reserveVal) body.reserve_amount = reserveVal;
+  return body;
+}
+
+async function previewCrosschain() {
+  try {
+    const d = await api('POST', '/crosschain/oft/preview', getCrosschainBody());
+    const p = d.preview;
+    $('cc-result').classList.remove('hidden');
+    const sweepInfo = p.dynamic_balance ? `
+      <div class="text-amber-400">扫链余额: ${esc(p.dynamic_balance)} ｜ Raw: ${esc(p.dynamic_balance_raw || '')}</div>
+    ` : '';
+    const directInfo = selectedCrosschainMode === 'direct' ? `
+      <div>Native Fee: ${esc(p.transfer_value)} wei ｜ 余额: ${esc(p.native_balance)} wei</div>
+      <div>Token 余额: ${esc(p.token_balance || '--')} ｜ Allowance: ${esc(p.allowance || '--')}</div>
+    ` : '';
+    $('cc-result').innerHTML = `
+      <div class="text-green-400 mb-1">预览完成 (${selectedCrosschainMode === 'direct' ? '直连' : 'API'}模式)${p.dynamic_balance ? ' 扫链' : ''}</div>
+      <div>钱包: ${esc(p.wallet_address)}</div>${sweepInfo}
+      <div>Quote ID: ${esc(p.quote_id || '--')}</div>
+      <div>Raw Amount: ${esc(p.amount_raw)}</div>
+      <div>预计到账: ${esc(p.estimated_received || '--')} ｜ ${p.fee_usd ? 'Fee USD: ' + esc(p.fee_usd) + ' ｜ ' : ''}${p.fee_percent ? 'Fee %: ' + esc(p.fee_percent) : ''}</div>
+      <div>执行步骤: ${esc(String(p.user_steps?.length || 0))} ｜ 可执行: ${p.can_execute ? '是' : '否'}${p.approval_required ? ' ｜ 需要 Approve' : ''}</div>${directInfo}
+    `;
+  } catch (e) {
+    $('cc-result').classList.remove('hidden');
+    $('cc-result').innerHTML = `<span class="text-red-400">${esc(e.message)}</span>`;
+  }
+}
+
+async function executeCrosschain() {
+  try {
+    const d = await api('POST', '/crosschain/oft/execute', getCrosschainBody());
+    _schCurrentJobId = d.job.id;
+    renderScheduleJob(d.job);
+    startSchedulePolling();
+    toast('跨链任务已启动');
+  } catch (e) { toast(e.message, false); }
+}
+
+async function scheduleCrosschain() {
+  try {
+    const d = await api('POST', '/crosschain/oft/schedule/start', {
+      interval_sec: parseInt($('cc-interval').value, 10) || 60,
+      count: parseInt($('cc-count').value, 10) || 1,
+      crosschain: getCrosschainBody(),
+    });
+    _schCurrentJobId = d.job.id;
+    renderScheduleJob(d.job);
+    startSchedulePolling();
+    toast('自动跨链任务已启动');
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadCrosschainHistory() {
+  try {
+    const d = await api('GET', '/crosschain/history?limit=20&offset=0');
+    const el = $('cc-history-list');
+    if (!d.records.length) { el.innerHTML = '<p class="text-gray-500 text-sm">暂无跨链记录</p>'; return; }
+    el.innerHTML = d.records.map(r => `
+      <div class="border-t border-gray-700 py-2 text-sm">
+        <div class="flex justify-between gap-3">
+          <span class="font-medium">${esc(r.symbol)} ${esc(r.src_chain)} -> ${esc(r.dst_chain)}</span>
+          <span class="text-gray-400">${esc(r.amount)}</span>
+        </div>
+        <div class="text-xs text-gray-400 break-all">源: ${esc(r.source_tx_hash || '--')}</div>
+        <div class="text-xs text-gray-400 break-all">目标: ${esc(r.destination_tx_hash || '--')}</div>
+        <div class="text-xs ${r.status === 'delivered' ? 'text-green-400' : 'text-amber-400'}">${esc(r.lz_status)} ｜ ${esc(r.message)}</div>
+      </div>
+    `).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadCrosschainHistorySummary() {
+  try {
+    const d = await api('GET', '/crosschain/history?limit=20&offset=0');
+    const el = $('history-crosschain-list');
+    if (!el) return;
+    if (!d.records.length) { el.innerHTML = '<p class="text-gray-500 text-sm">暂无跨链记录</p>'; return; }
+    el.innerHTML = d.records.map(r => `
+      <div class="bg-gray-800 rounded p-3 mb-2 text-sm">
+        <div class="flex justify-between">
+          <span class="font-medium">${esc(r.symbol)} (${esc(r.src_chain)} -> ${esc(r.dst_chain)})</span>
+          <span class="text-gray-400">${esc(r.amount)}</span>
+        </div>
+        <div class="text-gray-400 text-xs mt-1 break-all">源链: ${esc(r.source_tx_hash || '--')}</div>
+        <div class="text-gray-400 text-xs mt-1 break-all">目标链: ${esc(r.destination_tx_hash || '--')}</div>
+        <div class="text-xs mt-1 ${r.status === 'delivered' ? 'text-green-400' : 'text-amber-400'}">${esc(r.lz_status)} ｜ ${esc(r.message)}</div>
+      </div>
+    `).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadDepositTransferHistorySummary() {
+  try {
+    const d = await api('GET', '/arbitrage/dex-to-cex/history?limit=20&offset=0');
+    const el = $('history-deposit-transfer-list');
+    if (!el) return;
+    if (!d.records.length) { el.innerHTML = '<p class="text-gray-500 text-sm">暂无充值记录</p>'; return; }
+    el.innerHTML = d.records.map(r => `
+      <div class="bg-gray-800 rounded p-3 mb-2 text-sm">
+        <div class="flex justify-between">
+          <span class="font-medium">${esc(r.symbol)} (${esc(r.chain)})</span>
+          <span class="text-gray-400">${esc(r.amount)}</span>
+        </div>
+        <div class="text-gray-400 text-xs mt-1 break-all">充值地址: ${esc(r.deposit_address)}</div>
+        <div class="text-gray-400 text-xs mt-1 break-all">Tx: ${esc(r.tx_hash || '--')}</div>
+        <div class="text-xs mt-1 ${r.status === 'confirmed' ? 'text-green-400' : 'text-amber-400'}">${esc(r.status)} ｜ ${esc(r.message)}</div>
+      </div>
+    `).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
 async function onAccountChange() {
   const accountId = $('w-account').value;
   allCurrencies = [];
@@ -1244,10 +1975,6 @@ async function deleteTemplate() {
 }
 
 // ---- Scheduled withdraw ----
-function toggleSchedulePanel() {
-  $('schedule-panel').classList.toggle('hidden');
-}
-
 function showProgressPanel() {
   $('progress-panel').classList.remove('hidden');
 }
@@ -1259,7 +1986,8 @@ function dismissLatestTask(job) {
 
 function clearDismissedLatestTask(job) {
   if (!job?.job_type) return;
-  if (_dismissedLatestTaskIds[job.job_type] === job.id) {
+  // Only clear dismissal if state is running — stopped/terminated tasks should stay dismissed
+  if (job.state === 'running' && _dismissedLatestTaskIds[job.job_type] === job.id) {
     _dismissedLatestTaskIds[job.job_type] = null;
   }
 }
@@ -1271,27 +1999,323 @@ function addProgressLog(msg, ok = true) {
   $('prog-log').innerHTML = row + $('prog-log').innerHTML;
 }
 
-async function startSchedule() {
-  const interval = parseInt($('sch-interval').value) || 60;
-  const count = parseInt($('sch-count').value) || 1;
-  try {
-    const r = await api('POST', '/withdraw/schedule/start', {
-      interval_sec: interval,
-      count,
-      withdraw: getWithdrawBody(),
+let currentArbSlippagePct = 0.5;
+
+function setArbitrageDirection(direction) {
+  currentArbitrageDirection = direction;
+  const isDexToCex = direction === 'dex_to_cex';
+  $('cex-to-dex-panel').classList.toggle('hidden', isDexToCex);
+  $('dex-to-cex-panel').classList.toggle('hidden', !isDexToCex);
+  $('arb-dir-cex-to-dex').className = 'flex-1 py-2 text-sm font-semibold ' +
+    (!isDexToCex ? 'bg-amber-600 text-white' : 'bg-gray-800 text-gray-300');
+  $('arb-dir-dex-to-cex').className = 'flex-1 py-2 text-sm font-semibold ' +
+    (isDexToCex ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-300');
+  if (isDexToCex) populateDexToCexSelects();
+}
+
+function setArbSlippage(pct) {
+  currentArbSlippagePct = pct;
+  document.getElementById('arb-slippage-custom-input').classList.add('hidden');
+  [0, 0.5, 1].forEach(v => {
+    const el = document.getElementById('arb-slippage-' + v);
+    if (el) el.className = 'px-2 py-1 text-xs rounded ' + (v === pct ? 'bg-sky-600 text-white' : 'bg-gray-700 text-gray-300');
+  });
+  document.getElementById('arb-slippage-custom-btn').className = 'px-2 py-1 text-xs rounded bg-gray-700 text-gray-300';
+}
+
+function toggleArbCustomSlippage() {
+  const input = document.getElementById('arb-slippage-custom-input');
+  input.classList.toggle('hidden');
+  if (!input.classList.contains('hidden')) {
+    input.value = '';
+    input.focus();
+    [0, 0.5, 1].forEach(v => {
+      const el = document.getElementById('arb-slippage-' + v);
+      if (el) el.className = 'px-2 py-1 text-xs rounded bg-gray-700 text-gray-300';
     });
+    document.getElementById('arb-slippage-custom-btn').className = 'px-2 py-1 text-xs rounded bg-sky-600 text-white';
+  }
+}
+
+function getArbSlippageBps() {
+  const customInput = document.getElementById('arb-slippage-custom-input');
+  if (!customInput.classList.contains('hidden') && customInput.value) {
+    return Math.round(parseFloat(customInput.value) * 100) || 50;
+  }
+  return Math.round(currentArbSlippagePct * 100);
+}
+
+function setD2cSlippage(pct) {
+  currentD2cSlippagePct = pct;
+  [0, 0.5, 1].forEach(v => {
+    const el = document.getElementById('d2c-slippage-' + v);
+    if (el) el.className = 'px-2 py-1 text-xs rounded ' + (v === pct ? 'bg-sky-600 text-white' : 'bg-gray-700 text-gray-300');
+  });
+}
+
+function getD2cSlippageBps() {
+  return Math.round(currentD2cSlippagePct * 100);
+}
+
+function onArbitrageCrosschainToggle() {
+  const enabled = document.getElementById('arb-crosschain').checked;
+  document.getElementById('arb-cc-config').classList.toggle('hidden', !enabled);
+  if (enabled) populateArbitrageCrosschainSelects();
+}
+
+function onD2cCrosschainToggle() {
+  const enabled = document.getElementById('d2c-crosschain').checked;
+  document.getElementById('d2c-direct-config').classList.toggle('hidden', enabled);
+  document.getElementById('d2c-cc-config').classList.toggle('hidden', !enabled);
+  if (enabled) {
+    const dstChainSel = document.getElementById('d2c-dst-chain');
+    if (dstChainSel.options.length <= 1 && crosschainChains.length) {
+      renderCrosschainChainSelect('d2c-dst-chain', crosschainChains, '');
+      renderCrosschainChainSelect('d2c-src-chain', crosschainChains, '');
+    }
+    updateDexToCexRoute();
+  }
+}
+
+async function populateArbitrageCrosschainSelects() {
+  // Ensure wallets are loaded
+  if (!crosschainWallets.length) {
+    try {
+      const res = await api('GET', '/onchain/wallets');
+      crosschainWallets = res.wallets || [];
+      const settings = await api('GET', '/onchain/settings');
+      crosschainChains = settings.settings?.chains || [];
+    } catch {}
+  }
+  const walletSel = document.getElementById('arb-cc-wallet');
+  if (walletSel.options.length <= 1 && crosschainWallets.length) {
+    walletSel.innerHTML = '<option value="">选择链上钱包</option>' +
+      crosschainWallets.map(w => `<option value="${esc(w.id)}">${esc(w.id)}</option>`).join('');
+  }
+  const srcSel = document.getElementById('arb-cc-src-chain');
+  if (srcSel.options.length <= 1 && crosschainChains.length) {
+    renderCrosschainChainSelect('arb-cc-src-chain', crosschainChains, '');
+    renderCrosschainChainSelect('arb-cc-dst-chain', crosschainChains, '');
+  }
+}
+
+async function populateDexToCexSelects() {
+  if (!crosschainWallets.length) {
+    try {
+      const res = await api('GET', '/onchain/wallets');
+      crosschainWallets = res.wallets || [];
+      const settings = await api('GET', '/onchain/settings');
+      crosschainChains = settings.settings?.chains || [];
+    } catch {}
+  }
+  const walletSel = $('d2c-wallet');
+  if (walletSel.options.length <= 1 && crosschainWallets.length) {
+    walletSel.innerHTML = '<option value="">选择链上钱包</option>' +
+      crosschainWallets.map(w => `<option value="${esc(w.id)}">${esc(w.id)} (${esc(w.address.slice(0, 6))}...${esc(w.address.slice(-4))})</option>`).join('');
+  }
+  const directChainSel = document.getElementById('d2c-direct-chain');
+  if (directChainSel.options.length <= 1 && crosschainChains.length) {
+    renderCrosschainChainSelect('d2c-direct-chain', crosschainChains, '');
+  }
+  if ($('d2c-src-chain').options.length <= 1 && crosschainChains.length) {
+    renderCrosschainChainSelect('d2c-src-chain', crosschainChains, '');
+    renderCrosschainChainSelect('d2c-dst-chain', crosschainChains, '');
+  }
+}
+
+async function discoverArbitrageCrosschainRoutes() {
+  try {
+    const tokenAddress = $('arb-cc-token').value.trim();
+    const srcChain = $('arb-cc-src-chain').value;
+    if (!tokenAddress || !srcChain) {
+      arbitrageCrosschainRoutes = [];
+      selectedArbitrageCrosschainRoute = null;
+      return;
+    }
+
+    const d = await api('GET', `/crosschain/routes?src_chain=${encodeURIComponent(srcChain)}&token_address=${encodeURIComponent(tokenAddress)}`);
+    arbitrageCrosschainRoutes = d.routes || [];
+    updateArbitrageCrosschainRoute();
+  } catch (e) {
+    arbitrageCrosschainRoutes = [];
+    selectedArbitrageCrosschainRoute = null;
+    toast(e.message, false);
+  }
+}
+
+function updateArbitrageCrosschainRoute() {
+  if (!arbitrageCrosschainRoutes.length) {
+    selectedArbitrageCrosschainRoute = null;
+    return;
+  }
+
+  const srcChain = $('arb-cc-src-chain').value;
+  const dstChain = $('arb-cc-dst-chain').value;
+  const routesForSrc = arbitrageCrosschainRoutes.filter(r => r.srcChain === srcChain);
+  const routes = routesForSrc.length ? routesForSrc : arbitrageCrosschainRoutes;
+  const routesForDst = routes.filter(r => r.dstChain === dstChain);
+  selectedArbitrageCrosschainRoute = routesForDst[0] || routes[0] || null;
+
+  const dst = selectedArbitrageCrosschainRoute?.dstDeployment;
+  const dstTokenInput = $('arb-cc-dst-token');
+  const suggestedToken = dst?.innerTokenAddress || dst?.address || '';
+  const currentDstToken = dstTokenInput.value.trim();
+  if (suggestedToken && (!currentDstToken || currentDstToken === lastArbitrageAutoDstToken)) {
+    dstTokenInput.value = suggestedToken;
+    lastArbitrageAutoDstToken = suggestedToken;
+  }
+}
+
+async function discoverDexToCexRoutes() {
+  try {
+    const tokenAddress = $('d2c-token').value.trim();
+    const srcChain = $('d2c-src-chain').value;
+    if (!tokenAddress || !srcChain) {
+      dexToCexRoutes = [];
+      selectedDexToCexRoute = null;
+      $('d2c-route-meta').textContent = '路线: --';
+      return;
+    }
+
+    const d = await api('GET', `/crosschain/routes?src_chain=${encodeURIComponent(srcChain)}&token_address=${encodeURIComponent(tokenAddress)}`);
+    dexToCexRoutes = d.routes || [];
+    updateDexToCexRoute();
+  } catch (e) {
+    dexToCexRoutes = [];
+    selectedDexToCexRoute = null;
+    $('d2c-route-meta').textContent = '路线: 查询失败';
+    toast(e.message, false);
+  }
+}
+
+function updateDexToCexRoute() {
+  if (!dexToCexRoutes.length) {
+    selectedDexToCexRoute = null;
+    $('d2c-route-meta').textContent = '路线: 未查询到 route hint；最终可执行路径以 quote 返回为准';
+    return;
+  }
+
+  const srcChain = $('d2c-src-chain').value;
+  const dstChain = $('d2c-dst-chain').value;
+  const routesForSrc = dexToCexRoutes.filter(r => r.srcChain === srcChain);
+  const routes = routesForSrc.length ? routesForSrc : dexToCexRoutes;
+  const routesForDst = routes.filter(r => r.dstChain === dstChain);
+  selectedDexToCexRoute = routesForDst[0] || routes[0] || null;
+
+  const dst = selectedDexToCexRoute?.dstDeployment;
+  const dstTokenInput = $('d2c-dst-token');
+  const suggestedToken = dst?.innerTokenAddress || dst?.address || '';
+  const currentDstToken = dstTokenInput.value.trim();
+  if (suggestedToken && (!currentDstToken || currentDstToken === lastDexToCexAutoDstToken)) {
+    dstTokenInput.value = suggestedToken;
+    lastDexToCexAutoDstToken = suggestedToken;
+  }
+  if (selectedDexToCexRoute?.symbol && !$('d2c-symbol').value.trim()) {
+    $('d2c-symbol').value = selectedDexToCexRoute.symbol;
+  }
+  $('d2c-route-meta').textContent = selectedDexToCexRoute
+    ? `路线: ${selectedDexToCexRoute.symbol || 'TRANSFER'} ${selectedDexToCexRoute.srcChain} -> ${selectedDexToCexRoute.dstChain}`
+    : '路线: --';
+}
+
+function getArbitrageBody() {
+  const body = {
+    interval_sec: parseInt($('sch-interval').value) || 60,
+    threshold_amount: $('arb-threshold').value,
+    withdraw: getWithdrawBody(),
+  };
+  if ($('arb-crosschain').checked) {
+    body.crosschain = {
+      wallet_id: $('arb-cc-wallet').value,
+      src_chain: $('arb-cc-src-chain').value,
+      dst_chain: $('arb-cc-dst-chain').value,
+      token_address: selectedArbitrageCrosschainRoute?.srcDeployment?.address || $('arb-cc-token').value.trim(),
+      dst_token_address: selectedArbitrageCrosschainRoute?.dstDeployment?.address || $('arb-cc-dst-token').value.trim() || undefined,
+      recipient: $('arb-cc-recipient').value.trim(),
+      slippage_bps: getArbSlippageBps(),
+      mode: $('arb-cc-mode').value,
+      reserve_amount: $('arb-cc-reserve').value || undefined,
+      symbol: selectedArbitrageCrosschainRoute?.symbol,
+    };
+  }
+  return body;
+}
+
+function getDexToCexArbitrageBody() {
+  const useCrosschain = document.getElementById('d2c-crosschain').checked;
+  if (useCrosschain) {
+    return {
+      wallet_id: $('d2c-wallet').value,
+      symbol: $('d2c-symbol-cc').value.trim().toUpperCase() || selectedDexToCexRoute?.symbol || 'TRANSFER',
+      src_chain: $('d2c-src-chain').value,
+      token_address: selectedDexToCexRoute?.srcDeployment?.address || $('d2c-token').value.trim(),
+      threshold_amount: $('d2c-threshold-cc').value,
+      reserve_amount: $('d2c-reserve-cc').value || undefined,
+      interval_sec: parseInt($('d2c-interval-cc').value, 10) || 60,
+      deposit_address: $('d2c-deposit-address-cc').value.trim(),
+      crosschain: {
+        dst_chain: $('d2c-dst-chain').value,
+        dst_token_address: selectedDexToCexRoute?.dstDeployment?.address || $('d2c-dst-token').value.trim(),
+        slippage_bps: getD2cSlippageBps(),
+        mode: $('d2c-mode').value,
+        reserve_amount: $('d2c-reserve-cc').value || undefined,
+      },
+    };
+  }
+  return {
+    wallet_id: $('d2c-wallet').value,
+    symbol: $('d2c-symbol').value.trim().toUpperCase() || 'TRANSFER',
+    src_chain: $('d2c-direct-chain').value,
+    token_address: $('d2c-direct-token').value.trim(),
+    threshold_amount: $('d2c-threshold').value,
+    reserve_amount: $('d2c-reserve').value || undefined,
+    interval_sec: parseInt($('d2c-interval').value, 10) || 60,
+    deposit_address: $('d2c-deposit-address').value.trim(),
+  };
+}
+
+async function previewDexToCexArbitrage() {
+  try {
+    const d = await api('POST', '/arbitrage/dex-to-cex/preview', getDexToCexArbitrageBody());
+    $('d2c-result').classList.remove('hidden');
+    const route = d.has_crosschain ? `跨链后充值到 ${esc(d.deposit_chain)}` : `直接充值到 CEX（${esc(d.deposit_chain)}）`;
+    $('d2c-result').innerHTML =
+      `<span class="text-green-400">校验通过</span><div>源链余额: ${esc(d.balance_available)} ｜ 阈值: ${esc(d.threshold_amount)} ｜ 本轮可执行: ${d.will_execute ? '是' : '否'} ｜ ${route}</div>`;
+  } catch (e) {
+    $('d2c-result').classList.remove('hidden');
+    $('d2c-result').innerHTML = `<span class="text-red-400">${esc(e.message)}</span>`;
+  }
+}
+
+async function startDexToCexArbitrage() {
+  const interval = parseInt($('d2c-interval').value, 10) || 60;
+  try {
+    const r = await api('POST', '/arbitrage/dex-to-cex/start', getDexToCexArbitrageBody());
     _schCurrentJobId = r.job.id;
     renderScheduleJob(r.job);
     startSchedulePolling();
-    toast(`定时提现已启动: ${count} 次 / ${interval}s`);
+    toast(`DEX 到 CEX 搬砖任务已启动，每 ${interval}s 扫描余额`);
+  } catch (e) {
+    toast(e.message, false);
+  }
+}
+
+async function startArbitrage() {
+  const interval = parseInt($('sch-interval').value) || 60;
+  try {
+    const r = await api('POST', '/withdraw/arbitrage/start', getArbitrageBody());
+    _schCurrentJobId = r.job.id;
+    renderScheduleJob(r.job);
+    startSchedulePolling();
+    toast(`搬砖任务已启动，每 ${interval}s 扫描余额`);
   } catch (e) {
     toast(e.message, false);
   }
 }
 
 function setScheduleButtons(isRunning) {
-  $('btn-sch-start').classList.toggle('hidden', isRunning);
-  $('btn-sch-stop').classList.toggle('hidden', !isRunning);
+  $('btn-arb-start').classList.toggle('hidden', isRunning);
+  $('btn-arb-stop').classList.toggle('hidden', !isRunning);
 }
 
 function setProgressButtons(job) {
@@ -1316,10 +2340,14 @@ function clearProgressPanel() {
   $('prog-round').textContent = '--';
   $('prog-next').textContent = '--';
   $('prog-bar').style.width = '0%';
+  $('prog-links').classList.add('hidden');
+  $('prog-links').innerHTML = '';
   $('prog-log').innerHTML = '';
   $('sch-status').classList.add('hidden');
   $('sch-status').innerHTML = '';
   setScheduleButtons(false);
+  $('btn-d2c-start')?.classList.remove('hidden');
+  $('btn-d2c-stop')?.classList.add('hidden');
   setProgressButtons(null);
 }
 
@@ -1330,7 +2358,68 @@ function formatState(state) {
 }
 
 function formatTaskType(job) {
-  return job?.job_type === 'sell_market' ? '自动卖出' : '定时提现';
+  if (job?.job_type === 'sell_market') return '自动卖出';
+  if (isSingleCrosschainTask(job)) return '单次跨链';
+  if (job?.job_type === 'crosschain_oft') return '自动跨链';
+  if (job?.job_type === 'arbitrage') return 'CEX 到 DEX 搬砖';
+  if (job?.job_type === 'dex_to_cex_arbitrage') return 'DEX 到 CEX 搬砖';
+  return '定时提现';
+}
+
+function isSingleCrosschainTask(job) {
+  return job?.job_type === 'crosschain_oft' &&
+    job.total_count === 1 &&
+    !job.payload?.dynamic_amount &&
+    !job.payload?.interval_sec;
+}
+
+function normalizeTxHash(txHash) {
+  const value = String(txHash || '').trim();
+  return /^0x[a-fA-F0-9]{64}$/.test(value) ? value : '';
+}
+
+function getLayerZeroScanUrl(txHash) {
+  const hash = normalizeTxHash(txHash);
+  return hash ? `https://layerzeroscan.com/tx/${hash}` : '';
+}
+
+function getChainTxScanUrl(chain, txHash) {
+  const hash = normalizeTxHash(txHash);
+  if (!hash) return '';
+  const config = crosschainChains.find(c => c.name === chain);
+  return config?.explorerTxUrl ? config.explorerTxUrl.replace('{tx}', hash) : '';
+}
+
+function renderTaskLinks(job) {
+  const container = $('prog-links');
+  if (!container) return;
+  const isDexToCex = job?.job_type === 'dex_to_cex_arbitrage';
+  if (job?.job_type !== 'crosschain_oft' && !isDexToCex) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+
+  const sourceTxHash = job.progress?.source_tx_hash;
+  const destinationTxHash = job.progress?.destination_tx_hash;
+  const depositTxHash = job.progress?.deposit_tx_hash;
+  const links = [
+    ['LayerZero Scan', getLayerZeroScanUrl(sourceTxHash)],
+    ['源链 Scan', getChainTxScanUrl(job.payload?.src_chain, sourceTxHash)],
+    ['目标链 Scan', getChainTxScanUrl(job.payload?.dst_chain, destinationTxHash)],
+    ['充值 Scan', getChainTxScanUrl(job.payload?.dst_chain, depositTxHash)],
+  ].filter(([, href]) => href);
+
+  if (!links.length) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+
+  container.classList.remove('hidden');
+  container.innerHTML = '<span class="text-gray-400">查看</span>' + links.map(([label, href]) =>
+    `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer" class="text-sky-400 hover:text-sky-300 underline underline-offset-2">${esc(label)}</a>`
+  ).join('');
 }
 
 function renderScheduleJob(job) {
@@ -1340,26 +2429,42 @@ function renderScheduleJob(job) {
   showProgressPanel();
   const [stateText, stateClass] = formatState(job.state);
   const isSell = job.job_type === 'sell_market';
+  const isCrosschain = job.job_type === 'crosschain_oft';
+  const isSingleCrosschain = isSingleCrosschainTask(job);
+  const isArb = job.job_type === 'arbitrage';
+  const isDexToCex = job.job_type === 'dex_to_cex_arbitrage';
   const pct = job.total_count > 0
     ? Math.round((job.done_count / job.total_count) * 100)
     : (job.state === 'completed' ? 100 : 0);
   const remainSec = job.next_run_at
     ? Math.max(0, Math.ceil((new Date(job.next_run_at).getTime() - Date.now()) / 1000))
     : null;
-  const subject = isSell
+  const subject = isCrosschain
+    ? `${job.payload?.symbol || '--'} ${job.payload?.src_chain || '--'} -> ${job.payload?.dst_chain || '--'}`
+    : isSell
     ? (job.payload?.symbol || '--')
+    : isDexToCex
+    ? `${job.payload?.symbol || '--'} ${job.payload?.src_chain || '--'} -> ${job.payload?.dst_chain || '--'}`
     : `${job.payload?.asset || '--'} / ${job.payload?.network || '--'}`;
 
+  const isSweep = isCrosschain && job.payload?.dynamic_amount;
   $('prog-type').textContent = formatTaskType(job);
   $('prog-state').textContent = stateText;
   $('prog-state').className = stateClass;
-  $('prog-interval').textContent = `${job.interval_sec}s`;
-  $('prog-round').textContent = isSell
+  $('prog-interval').textContent = isSingleCrosschain ? '--' : `${job.interval_sec}s`;
+  $('prog-round').textContent = isArb
+    ? `已提现: ${job.progress?.withdraw_count || 0} 次`
+    : isDexToCex
+    ? `已充值: ${job.progress?.completed_count || job.done_count || 0} 次`
+    : isSweep
+    ? `已发送: ${job.done_count} 次`
+    : isSell
     ? `${job.done_count} 次`
     : `${job.done_count} / ${job.total_count}`;
   $('prog-subject').textContent = subject;
-  $('prog-next').textContent = remainSec !== null ? `${remainSec}s` : '--';
+  $('prog-next').textContent = isSingleCrosschain ? '--' : (remainSec !== null ? `${remainSec}s` : '--');
   $('prog-bar').style.width = `${pct}%`;
+  renderTaskLinks(job);
 
   const logs = job.logs || [];
   $('prog-log').innerHTML = logs.map((l) => {
@@ -1369,13 +2474,33 @@ function renderScheduleJob(job) {
   }).join('');
 
   $('sch-status').classList.remove('hidden');
-  $('sch-status').innerHTML = isSell
+  const sweepBalance = isSweep ? ` ｜ 余额: ${esc(job.progress?.dynamic_balance || '--')}` : '';
+  const arbBalance = isArb && job.progress?.last_balance ? ` ｜ 余额: ${esc(job.progress.last_balance)}` : '';
+  const arbPhase = isArb ? ` ｜ 阶段: ${job.progress?.phase || '--'}` : '';
+  const arbDelivered = isArb && job.progress?.delivered_count ? ` ｜ 已跨链: ${job.progress.delivered_count}` : '';
+  const d2cBalance = isDexToCex && job.progress?.last_source_balance ? ` ｜ 源链余额: ${esc(job.progress.last_source_balance)}` : '';
+  const d2cAmount = isDexToCex && job.progress?.deposit_amount ? ` ｜ 最近充值: ${esc(job.progress.deposit_amount)}` : '';
+  $('sch-status').innerHTML = isArb
+    ? `搬砖${arbPhase}${arbBalance}${arbDelivered}`
+    : isDexToCex
+    ? `DEX 到 CEX ｜ 阶段: ${esc(job.progress?.phase || '--')}${d2cBalance}${d2cAmount}`
+    : isSell
     ? `累计卖出: ${esc(job.progress?.sold_total || '0')} ${esc(job.payload?.base_asset || '')}`
+    : isCrosschain
+    ? `LayerZero: ${esc(job.progress?.lz_status || job.progress?.phase || '--')}${sweepBalance}`
     : `进度: ${job.done_count}/${job.total_count}`;
   if (isSell) {
     void loadSellBalance();
   }
-  setScheduleButtons(job.state === 'running' && job.job_type === 'withdraw');
+  if (isCrosschain && job.state !== 'running') {
+    void loadCrosschainHistory();
+  }
+  if (isDexToCex && job.state !== 'running') {
+    void loadDepositTransferHistorySummary();
+  }
+  setScheduleButtons(job.state === 'running' && (job.job_type === 'withdraw' || job.job_type === 'arbitrage'));
+  $('btn-d2c-start')?.classList.toggle('hidden', job.state === 'running' && job.job_type === 'dex_to_cex_arbitrage');
+  $('btn-d2c-stop')?.classList.toggle('hidden', !(job.state === 'running' && job.job_type === 'dex_to_cex_arbitrage'));
   setProgressButtons(job);
 }
 
@@ -1413,7 +2538,44 @@ async function syncSchedule() {
       }
     }
     if (withdrawViewActive) {
-      const latest = await api('GET', '/tasks/latest?job_type=withdraw');
+      let latest = await api('GET', '/tasks/latest?job_type=withdraw');
+      if (
+        latest.job &&
+        (latest.job.state === 'running' || latest.job.state === 'completed') &&
+        _dismissedLatestTaskIds[latest.job.job_type] !== latest.job.id
+      ) {
+        _schCurrentJobId = latest.job.id;
+        renderScheduleJob(latest.job);
+        if (latest.job.state === 'running') startSchedulePolling();
+        return;
+      }
+      // Also check for arbitrage tasks in withdraw view
+      latest = await api('GET', '/tasks/latest?job_type=arbitrage');
+      if (
+        latest.job &&
+        (latest.job.state === 'running' || latest.job.state === 'completed') &&
+        _dismissedLatestTaskIds[latest.job.job_type] !== latest.job.id
+      ) {
+        _schCurrentJobId = latest.job.id;
+        renderScheduleJob(latest.job);
+        if (latest.job.state === 'running') startSchedulePolling();
+        return;
+      }
+      latest = await api('GET', '/tasks/latest?job_type=dex_to_cex_arbitrage');
+      if (
+        latest.job &&
+        (latest.job.state === 'running' || latest.job.state === 'completed') &&
+        _dismissedLatestTaskIds[latest.job.job_type] !== latest.job.id
+      ) {
+        _schCurrentJobId = latest.job.id;
+        renderScheduleJob(latest.job);
+        if (latest.job.state === 'running') startSchedulePolling();
+        return;
+      }
+    }
+    const crosschainViewActive = $('view-crosschain')?.classList.contains('active');
+    if (crosschainViewActive) {
+      const latest = await api('GET', '/tasks/latest?job_type=crosschain_oft');
       if (
         latest.job &&
         (latest.job.state === 'running' || latest.job.state === 'completed') &&
@@ -1525,21 +2687,26 @@ async function loadHistory(offset = 0) {
   try {
     const d = await api('GET', `/withdraw/history?limit=20&offset=${historyOffset}`);
     const el = $('history-list');
-    if (!d.records.length) { el.innerHTML = '<p class="text-gray-500 text-sm">暂无记录</p>'; return; }
-    el.innerHTML = d.records.map(r => `
-      <div class="bg-gray-800 rounded p-3 mb-2 text-sm">
-        <div class="flex justify-between">
-          <span class="font-medium">${esc(r.asset)} (${esc(r.network)})</span>
-          <span class="text-gray-400">${esc(r.amount)}</span>
-        </div>
-        <div class="text-gray-400 text-xs mt-1">${esc(r.address)}</div>
-        <div class="flex justify-between text-xs mt-1">
-          <span>${esc(r.account_id)}</span>
-          <span>${new Date(r.timestamp).toLocaleString()}</span>
-        </div>
-      </div>`).join('');
+    if (!d.records.length) {
+      el.innerHTML = '<p class="text-gray-500 text-sm">暂无记录</p>';
+    } else {
+      el.innerHTML = d.records.map(r => `
+        <div class="bg-gray-800 rounded p-3 mb-2 text-sm">
+          <div class="flex justify-between">
+            <span class="font-medium">${esc(r.asset)} (${esc(r.network)})</span>
+            <span class="text-gray-400">${esc(r.amount)}</span>
+          </div>
+          <div class="text-gray-400 text-xs mt-1">${esc(r.address)}</div>
+          <div class="flex justify-between text-xs mt-1">
+            <span>${esc(r.account_id)}</span>
+            <span>${new Date(r.timestamp).toLocaleString()}</span>
+          </div>
+        </div>`).join('');
+    }
     $('hist-prev').classList.toggle('hidden', historyOffset === 0);
     $('hist-next').classList.toggle('hidden', historyOffset + 20 >= d.total);
+    loadCrosschainHistorySummary();
+    loadDepositTransferHistorySummary();
   } catch (e) { toast(e.message, false); }
 }
 

@@ -1,6 +1,6 @@
 import type { Request } from "express";
 import type { SessionManager } from "../security.js";
-import { loadLatestRunningTask } from "./store.js";
+import { loadLatestRunningTask, stopInterruptedRunningTasks } from "./store.js";
 import type { TaskJob } from "./types.js";
 import { createTaskExecutor } from "./executors.js";
 import { taskRuntime } from "./runtime.js";
@@ -16,6 +16,7 @@ export function ensureRuntimeHydrated(session: SessionManager, req: Request): vo
     return;
   }
 
+  stopInterruptedRunningTasks();
   const persisted = loadLatestRunningTask();
   if (!persisted) return;
   hydrateTask(persisted, session, req);

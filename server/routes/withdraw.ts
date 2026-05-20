@@ -6,7 +6,7 @@ import { executeWithdrawRequest, resolveAccountContext } from "../tasks/executor
 import { ensureRuntimeHydrated, hydrateTask } from "../tasks/hydration.js";
 import { taskRuntime } from "../tasks/runtime.js";
 import { loadLatestRunningTask, loadTaskJob, persistTaskJob } from "../tasks/store.js";
-import type { TaskJob, TaskLogRecord } from "../tasks/types.js";
+import type { ArbitrageTaskPayload, TaskJob, TaskLogRecord } from "../tasks/types.js";
 import {
   appendWithdrawHistory,
   countWithdrawHistory,
@@ -302,6 +302,103 @@ export function withdrawRoutes(session: SessionManager): Router {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(500).json({ ok: false, error: "EXCHANGE_ERROR", message });
+    }
+  });
+
+  // --------------- Arbitrage (搬砖) ---------------
+
+  router.post("/arbitrage/preview", async (req, res) => {
+    try {
+      const { account_id, asset, threshold_amount } = req.body as {
+        account_id: string;
+        asset: string;
+        threshold_amount: string;
+      };
+      if (!account_id || !asset) {
+        throw new Error("account_id and asset are required");
+      }
+      const context = resolveAccountContext(account_id, session, req);
+      const balance = await context.adapter.getBalance(asset, context.creds);
+      const threshold = Number(threshold_amount ?? 0);
+      res.json({
+        ok: true,
+        balance_available: balance.available,
+        threshold_amount: threshold_amount,
+        will_withdraw: Number(balance.available) > threshold,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
+    }
+  });
+
+  router.post("/arbitrage/start", async (req, res) => {
+    try {
+      ensureRuntimeHydrated(session, req);
+      if (taskRuntime.getActiveTask()) {
+        res.status(409).json({
+          ok: false,
+          error: "SCHEDULE_RUNNING",
+          message: "已有任务在运行，请先停止",
+        });
+        return;
+      }
+
+      const body = req.body as {
+        interval_sec: number;
+        threshold_amount: string;
+        withdraw: WithdrawRequest;
+        crosschain?: ArbitrageTaskPayload["crosschain"];
+      };
+
+      if (!body.withdraw?.account_id || !body.threshold_amount) {
+        throw new Error("withdraw.account_id and threshold_amount are required");
+      }
+
+      const context = resolveAccountContext(body.withdraw.account_id, session, req);
+      const withdrawReq: WithdrawRequest = {
+        account_id: body.withdraw.account_id,
+        asset: body.withdraw.asset,
+        network: body.withdraw.network,
+        address: body.withdraw.address,
+        address_tag: body.withdraw.address_tag ?? null,
+        amount: "0",
+      };
+      await context.adapter.validateRequest(withdrawReq);
+
+      const now = new Date().toISOString();
+      const arbPayload: ArbitrageTaskPayload = {
+        account_id: body.withdraw.account_id,
+        asset: body.withdraw.asset,
+        network: body.withdraw.network,
+        address: body.withdraw.address,
+        address_tag: body.withdraw.address_tag ?? null,
+        threshold_amount: body.threshold_amount,
+        interval_sec: Number(body.interval_sec) || 60,
+        crosschain: body.crosschain,
+      };
+
+      const job: TaskJob = {
+        id: `arb_${crypto.randomUUID()}`,
+        job_type: "arbitrage",
+        state: "running",
+        interval_sec: arbPayload.interval_sec,
+        total_count: 0,
+        done_count: 0,
+        next_run_at: null,
+        created_at: now,
+        updated_at: now,
+        payload: arbPayload,
+        progress: { phase: "check_balance", withdraw_count: 0, delivered_count: 0 },
+        logs: [],
+      };
+
+      hydrateTask(job, session, req);
+      void taskRuntime.runNow(job.id);
+      res.json({ ok: true, job: taskRuntime.getTask(job.id) ?? job });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
     }
   });
 
