@@ -8,7 +8,9 @@
 - 主密码加密存储交易所密钥（Argon2id + AES-256-GCM）
 - 基于 SQLite 持久化配置、提现历史、定时任务与日志
 - 支持 Binance / OKX / Bybit / Gate / Bitget / MEXC 现货按秒间隔自动市价卖出，直到余额卖完
-- 支持 CEX 到 DEX 搬砖，以及 DEX 到 CEX 搬砖（链上跨链后转账到交易所充值地址）
+- 支持 CEX 到 DEX 搬砖，以及 DEX 到 CEX 搬砖（可直接链上转账，也可叠加自动跨链后转账到交易所充值地址）
+- DEX 到 CEX 可通过 OKX Web3 DEX 余额接口读取所选链上钱包资产，避免手动填写 Token 合约地址和币种符号
+- 地址簿为统一地址列表，提现、跨链收款、DEX 到 CEX 充值地址都可直接选择同一批地址
 - 任务完成后，重新进入对应页面仍可查看最近一次任务和执行日志
 - 零前端构建步骤（Tailwind CDN + vanilla JS）
 - 会话空闲 15 分钟自动锁定
@@ -67,10 +69,12 @@ http://<TAILSCALE_IP>:4217
 1. 首次访问时设置主密码
 2. 输入主密码解锁会话
 3. 在「账户」页添加交易所 API Key / Secret（OKX、Bitget 还需 Passphrase）
-4. 在「搬砖」页选择 CEX 到 DEX 或 DEX 到 CEX，先预校验再启动任务
-5. 在「卖出」页选择支持现货卖出的账户和交易对，预校验后启动自动卖出
-6. 任务运行期间可关闭前端页面；重新进入后会自动回显当前任务或最近一次同类型任务日志
-6. 在「历史」页查看提现记录
+4. 在「账户」页的「链上设置」保存链上钱包；如需 DEX 到 CEX 直接读取钱包资产，保存 OKX Web3 API Key / Secret / Passphrase
+5. 在「地址簿」页维护常用地址；地址簿不区分充值地址和提现地址
+6. 在「搬砖」页选择 CEX 到 DEX 或 DEX 到 CEX，先预校验再启动任务
+7. 在「卖出」页选择支持现货卖出的账户和交易对，预校验后启动自动卖出
+8. 任务运行期间可关闭前端页面；重新进入后会自动回显当前任务或最近一次同类型任务日志
+9. 在「历史」页查看提现、跨链和 DEX 到 CEX 转账记录
 
 ## 定时任务行为
 
@@ -90,8 +94,20 @@ http://<TAILSCALE_IP>:4217
 ## 搬砖说明
 
 - CEX 到 DEX：余额超过阈值后从交易所提现到链上，可叠加自动跨链。
-- DEX 到 CEX：定时扫描源链钱包余额，超过阈值后跨链到目标链，再从目标链钱包转账到手动填写的交易所充值地址。
+- DEX 到 CEX 直充：选择链上钱包后，需要手动选择区块链；系统通过 OKX Web3 DEX 余额接口读取该链资产，然后从资产下拉框选择 Token。
+- DEX 到 CEX 跨链：勾选「叠加自动跨链」后，跨链相关设置会显示在 DEX 到 CEX 面板下方；源链资产从 LayerZero OFT 列表按链筛选，跨链到目标链后再转账到地址簿选择的 CEX 充值地址。
+- DEX 到 CEX 地址从统一地址簿选择；地址簿本身不区分充值地址和提现地址。
 - DEX 到 CEX 的完成标准是最终链上转账交易确认，不轮询交易所充值入账。
+
+## 链上与 OKX Web3 配置
+
+- LayerZero API Key 用于 API 模式的跨链路线与交易构造；直连模式会直接调用链上合约。
+- OKX Web3 配置保存到本机 SQLite 数据库，不依赖浏览器 localStorage。
+- OKX Web3 只需要 API Key / Secret / Passphrase，不使用 Project ID。
+- 后端调用 OKX Web3 DEX 余额接口：
+  `/api/v6/dex/balance/all-token-balances-by-address?address=<wallet>&chains=<chainId>&excludeRiskToken=1`
+- 如果数据库未配置 OKX Web3，后端会尝试读取环境变量：
+  `OKX_DEX_API_KEY`、`OKX_DEX_API_SECRET`、`OKX_DEX_API_PASSPHRASE`
 
 ## 安全建议
 
@@ -118,6 +134,9 @@ server/
   routes/tasks.ts      # 通用任务路由
   routes/trade.ts      # 现货自动卖出路由
   routes/withdraw.ts   # 提现路由
+  routes/onchain.ts    # 链上钱包与 OKX Web3 配置/余额查询
+  routes/crosschain.ts # LayerZero/OFT 跨链路由与任务
+  onchain/okx-web3.ts  # OKX Web3 DEX 余额接口签名与归一化
   exchange/types.ts    # 交易所统一接口
   exchange/gate.ts     # Gate 适配器
   exchange/binance.ts  # Binance 适配器
@@ -151,6 +170,19 @@ public/
 | GET | `/api/templates` | 列出提现模板 |
 | POST | `/api/templates` | 新增/更新模板 |
 | DELETE | `/api/templates/:name` | 删除模板 |
+| GET | `/api/onchain/settings` | 查询链上设置、支持链与 OKX Web3 配置状态 |
+| PUT | `/api/onchain/settings` | 保存 LayerZero API Key 或 OKX Web3 API Key / Secret / Passphrase |
+| GET | `/api/onchain/wallets` | 列出链上钱包 |
+| POST | `/api/onchain/wallets` | 新增链上钱包 |
+| PUT | `/api/onchain/wallets/:id` | 更新链上钱包 |
+| DELETE | `/api/onchain/wallets/:id` | 删除链上钱包 |
+| GET | `/api/onchain/okx-web3/balances` | 通过 OKX Web3 DEX 查询指定钱包和链的资产 |
+| GET | `/api/crosschain/ofts` | 查询 OFT 资产列表，可按 `symbol` 或 `chain_name` 过滤 |
+| GET | `/api/crosschain/routes` | 查询跨链路线 |
+| POST | `/api/crosschain/oft/preview` | 跨链预校验 |
+| POST | `/api/crosschain/oft/execute` | 执行单次跨链 |
+| POST | `/api/crosschain/oft/schedule/start` | 启动自动跨链 |
+| GET | `/api/crosschain/history` | 跨链历史 |
 | POST | `/api/withdraw/preview` | 预校验 |
 | POST | `/api/withdraw/execute` | 执行提现 |
 | POST | `/api/withdraw/schedule/start` | 启动后端定时提现 |
@@ -159,6 +191,9 @@ public/
 | GET | `/api/withdraw/schedule/:id` | 查询指定定时任务 |
 | GET | `/api/withdraw/history` | 提现历史 |
 | GET | `/api/withdraw/:id` | 查询提现状态 |
+| GET | `/api/trade/symbols` | 列出现货交易对 |
+| GET | `/api/trade/symbol/:symbol` | 查询单个现货交易对规则 |
+| GET | `/api/trade/balance` | 查询卖出币种余额 |
 | GET | `/api/trade/binance/symbols` | 列出现货交易对（兼容旧 Binance 路径） |
 | GET | `/api/trade/binance/symbol/:symbol` | 查询单个现货交易对规则（兼容旧 Binance 路径） |
 | GET | `/api/trade/binance/balance` | 查询卖出币种余额（兼容旧 Binance 路径） |
