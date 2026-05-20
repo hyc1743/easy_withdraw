@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 import { decrypt, encrypt, type SessionManager } from "../security.js";
 import { loadConfig, saveConfig } from "../config.js";
 import { evmChains } from "../onchain/chains.js";
+import { listOkxWeb3TokenBalances } from "../onchain/okx-web3.js";
 
 export function onchainRoutes(session: SessionManager): Router {
   const router = Router();
@@ -13,18 +14,20 @@ export function onchainRoutes(session: SessionManager): Router {
       ok: true,
       settings: {
         has_layerzero_api_key: Boolean(config.layerzero_api_key_enc),
+        has_okx_web3_key: Boolean(config.okx_web3),
         chains: Object.values(evmChains),
       },
     });
   });
 
   router.put("/settings", (req, res) => {
-    const apiKey = String(req.body.layerzero_api_key ?? "").trim();
-    if (!apiKey) {
+    const layerzeroApiKey = String(req.body.layerzero_api_key ?? "").trim();
+    const okxWeb3ApiKey = String(req.body.okx_web3_api_key ?? "").trim();
+    if (!layerzeroApiKey && !okxWeb3ApiKey) {
       res.status(400).json({
         ok: false,
         error: "BAD_REQUEST",
-        message: "layerzero_api_key is required",
+        message: "layerzero_api_key or okx_web3_api_key is required",
       });
       return;
     }
@@ -34,9 +37,53 @@ export function onchainRoutes(session: SessionManager): Router {
       return;
     }
     const config = loadConfig();
-    config.layerzero_api_key_enc = encrypt(apiKey, key);
+    if (layerzeroApiKey) {
+      config.layerzero_api_key_enc = encrypt(layerzeroApiKey, key);
+    }
+    if (okxWeb3ApiKey) {
+      const apiSecret = String(req.body.okx_web3_api_secret ?? "").trim();
+      const passphrase = String(req.body.okx_web3_passphrase ?? "").trim();
+      if (!apiSecret || !passphrase) {
+        res.status(400).json({
+          ok: false,
+          error: "BAD_REQUEST",
+          message: "okx_web3_api_secret and okx_web3_passphrase are required",
+        });
+        return;
+      }
+      config.okx_web3 = {
+        api_key: okxWeb3ApiKey,
+        api_secret_enc: encrypt(apiSecret, key),
+        passphrase_enc: encrypt(passphrase, key),
+      };
+    }
     saveConfig(config);
     res.json({ ok: true });
+  });
+
+  router.get("/okx-web3/balances", async (req, res) => {
+    try {
+      const walletId = String(req.query.wallet_id ?? "").trim();
+      const chainName = String(req.query.chain ?? "").trim();
+      if (!walletId || !chainName) {
+        throw new Error("wallet_id and chain are required");
+      }
+      const config = loadConfig();
+      const wallet = config.onchain_wallets.find((item) => item.id === walletId);
+      const chain = evmChains[chainName];
+      if (!wallet) throw new Error("Wallet not found");
+      if (!chain) throw new Error("Unsupported chain");
+      const tokens = await listOkxWeb3TokenBalances({
+        address: wallet.address,
+        chainId: chain.chainId,
+        session,
+        req,
+      });
+      res.json({ ok: true, tokens });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
+    }
   });
 
   router.get("/wallets", (_req, res) => {

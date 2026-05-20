@@ -36,6 +36,12 @@ export interface OnchainWalletConfig {
   private_key_enc: string;
 }
 
+export interface OkxWeb3Config {
+  api_key: string;
+  api_secret_enc: string;
+  passphrase_enc: string;
+}
+
 export interface AppConfig {
   version: number;
   security: {
@@ -49,6 +55,7 @@ export interface AppConfig {
   templates: WithdrawTemplate[];
   onchain_wallets: OnchainWalletConfig[];
   layerzero_api_key_enc: string | null;
+  okx_web3: OkxWeb3Config | null;
   settings: {
     host: string;
     port: number;
@@ -89,6 +96,9 @@ export function loadConfig(): AppConfig {
   if ((cfg as Partial<AppConfig>).layerzero_api_key_enc === undefined) {
     cfg.layerzero_api_key_enc = null;
   }
+  if ((cfg as Partial<AppConfig>).okx_web3 === undefined) {
+    cfg.okx_web3 = null;
+  }
   if (!cfg.settings.host) cfg.settings.host = "127.0.0.1";
   return cfg;
 }
@@ -116,6 +126,7 @@ export function ensureConfig(): AppConfig {
     templates: [],
     onchain_wallets: [],
     layerzero_api_key_enc: null,
+    okx_web3: null,
     settings: {
       host: "127.0.0.1",
       port: 4217,

@@ -12,6 +12,7 @@ interface LegacyConfig {
   templates?: WithdrawTemplate[];
   onchain_wallets?: OnchainWalletConfig[];
   layerzero_api_key_enc?: string | null;
+  okx_web3?: AppConfig["okx_web3"];
   settings?: AppConfig["settings"];
 }
 
@@ -44,6 +45,7 @@ function defaultConfig(): AppConfig {
     templates: [],
     onchain_wallets: [],
     layerzero_api_key_enc: null,
+    okx_web3: null,
     settings: {
       host: "127.0.0.1",
       port: 4217,
@@ -62,6 +64,9 @@ function normalizeConfig(raw: LegacyConfig): AppConfig {
   if (Array.isArray(raw.onchain_wallets)) cfg.onchain_wallets = raw.onchain_wallets;
   if (raw.layerzero_api_key_enc !== undefined) {
     cfg.layerzero_api_key_enc = raw.layerzero_api_key_enc;
+  }
+  if (raw.okx_web3 !== undefined) {
+    cfg.okx_web3 = raw.okx_web3;
   }
   if (raw.settings) {
     cfg.settings = {

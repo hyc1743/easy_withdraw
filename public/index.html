@@ -108,6 +108,15 @@
         <button onclick="saveLayerZeroApiKey()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">保存 API Key</button>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+        <input id="okx-web3-key" placeholder="OKX Web3 API Key" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <input id="okx-web3-secret" type="password" placeholder="Secret Key" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <input id="okx-web3-passphrase" type="password" placeholder="Passphrase" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+      </div>
+      <div class="flex items-center gap-3 mb-3">
+        <button onclick="saveOkxWeb3Config()" class="bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded text-sm">保存 OKX Web3</button>
+        <span id="okx-web3-status" class="text-xs text-gray-400">OKX Web3: 未配置</span>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
         <input id="wallet-id" placeholder="钱包 ID (如 peaq_wallet)" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
         <input id="wallet-private-key" type="password" placeholder="私钥" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
         <button onclick="saveOnchainWallet()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm">保存钱包</button>
@@ -125,7 +134,7 @@
     </div>
     <div id="addr-form" class="hidden bg-gray-800 rounded-lg p-6 mb-4">
       <input id="addr-label" placeholder="备注名称 (如 币安TRC20)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
-      <input id="addr-address" placeholder="提现地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <input id="addr-address" placeholder="地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
       <button onclick="saveAddress()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm w-full">保存</button>
     </div>
     <div id="addr-list"></div>
@@ -249,19 +258,23 @@
     </div>
     <div id="dex-to-cex-panel" class="hidden bg-gray-800 rounded-lg p-6">
       <div class="text-sm font-semibold text-emerald-400 mb-3">DEX 到 CEX 搬砖</div>
-      <select id="d2c-wallet" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm"><option value="">选择链上钱包</option></select>
+      <select id="d2c-wallet" onchange="onDexToCexWalletChange()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm"><option value="">选择链上钱包</option></select>
 
       <!-- Direct deposit config (crosschain OFF) -->
       <div id="d2c-direct-config">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-          <input id="d2c-direct-token" placeholder="Token 合约地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
           <div class="space-y-1">
-            <input id="d2c-direct-chain-search" oninput="filterCrosschainChainSelect('d2c-direct-chain', this.value)" placeholder="搜索区块链" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-            <select id="d2c-direct-chain" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">选择区块链</option></select>
+            <input id="d2c-direct-chain-search" oninput="filterCrosschainChainSelect('d2c-direct-chain', this.value, crosschainChains, '选择区块链')" placeholder="搜索区块链" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+            <select id="d2c-direct-chain" onchange="loadDexToCexChainAssets('direct')" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">选择区块链</option></select>
           </div>
+          <select id="d2c-direct-token-select" onchange="selectDexToCexAsset('direct')" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">先选择区块链</option></select>
+          <input id="d2c-direct-token" type="hidden">
         </div>
-        <input id="d2c-symbol" placeholder="币种符号，如 USDT" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
-        <input id="d2c-deposit-address" placeholder="CEX 充值地址 (EVM)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+        <input id="d2c-symbol" readonly placeholder="选择资产后自动填充币种" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+          <select id="d2c-deposit-address-book" onchange="pickD2cDepositAddress('direct')" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">从地址簿选择</option></select>
+          <input id="d2c-deposit-address" readonly placeholder="CEX 充值地址 (EVM)" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
           <input id="d2c-threshold" type="number" step="any" min="0" placeholder="触发阈值" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
           <input id="d2c-reserve" type="number" step="any" min="0" placeholder="预留币数" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
@@ -269,12 +282,17 @@
         </div>
       </div>
 
+      <div class="flex items-center gap-2 mb-3">
+        <input type="checkbox" id="d2c-crosschain" onchange="onD2cCrosschainToggle()" class="w-4 h-4 rounded border-gray-500">
+        <span class="text-sm">叠加自动跨链 <span class="text-xs text-gray-500">(跨链到目标链后再充值到 CEX)</span></span>
+      </div>
+
       <!-- Crosschain config (crosschain ON) -->
       <div id="d2c-cc-config" class="hidden">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <div class="space-y-1">
             <input id="d2c-src-chain-search" oninput="filterCrosschainChainSelect('d2c-src-chain', this.value)" placeholder="搜索源链" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-            <select id="d2c-src-chain" onchange="discoverDexToCexRoutes()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">源链</option></select>
+            <select id="d2c-src-chain" onchange="loadDexToCexChainAssets('crosschain')" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">源链</option></select>
           </div>
           <div class="space-y-1">
             <input id="d2c-dst-chain-search" oninput="filterCrosschainChainSelect('d2c-dst-chain', this.value)" placeholder="搜索目标链" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
@@ -282,11 +300,15 @@
           </div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-          <input id="d2c-token" onblur="discoverDexToCexRoutes()" placeholder="源 Token 地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-          <input id="d2c-dst-token" onblur="updateDexToCexRoute()" placeholder="目标 Token 地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <select id="d2c-token-select" onchange="selectDexToCexAsset('crosschain')" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">先选择源链</option></select>
+          <input id="d2c-dst-token" readonly placeholder="目标 Token 地址" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <input id="d2c-token" type="hidden">
         </div>
-        <input id="d2c-symbol-cc" placeholder="币种符号，如 USDT" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
-        <input id="d2c-deposit-address-cc" placeholder="CEX 充值地址 (EVM)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+        <input id="d2c-symbol-cc" readonly placeholder="选择资产后自动填充币种" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+          <select id="d2c-deposit-address-book-cc" onchange="pickD2cDepositAddress('crosschain')" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"><option value="">从地址簿选择</option></select>
+          <input id="d2c-deposit-address-cc" readonly placeholder="CEX 充值地址 (EVM)" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
           <input id="d2c-threshold-cc" type="number" step="any" min="0" placeholder="触发阈值" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
           <input id="d2c-reserve-cc" type="number" step="any" min="0" placeholder="预留币数" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
@@ -306,10 +328,6 @@
         <div id="d2c-route-meta" class="text-xs text-gray-400 mb-3">路线: --</div>
       </div>
 
-      <div class="flex items-center gap-2 mb-3">
-        <input type="checkbox" id="d2c-crosschain" onchange="onD2cCrosschainToggle()" class="w-4 h-4 rounded border-gray-500">
-        <span class="text-sm">叠加自动跨链 <span class="text-xs text-gray-500">(跨链到目标链后再充值到 CEX)</span></span>
-      </div>
       <div class="flex gap-3">
         <button onclick="previewDexToCexArbitrage()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预校验</button>
         <button onclick="startDexToCexArbitrage()" id="btn-d2c-start" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded text-sm font-semibold">开始 DEX 到 CEX</button>
@@ -550,6 +568,8 @@ let lastArbitrageAutoDstToken = '';
 let dexToCexRoutes = [];
 let selectedDexToCexRoute = null;
 let lastDexToCexAutoDstToken = '';
+let dexToCexAssets = { direct: [], crosschain: [] };
+let d2cDepositAddresses = [];
 let currentArbitrageDirection = 'cex_to_dex';
 let currentD2cSlippagePct = 0.5;
 let selectedCrosschainMode = 'api';
@@ -802,6 +822,32 @@ async function loadAccounts() {
   } catch (e) { toast(e.message, false); }
 }
 
+function loadOkxWeb3ConfigView(settings) {
+  if ($('okx-web3-status')) {
+    $('okx-web3-status').textContent = `OKX Web3: ${settings?.has_okx_web3_key ? '已保存到数据库' : '未配置'}`;
+  }
+}
+
+async function saveOkxWeb3Config() {
+  const apiKey = $('okx-web3-key').value.trim();
+  const apiSecret = $('okx-web3-secret').value.trim();
+  const passphrase = $('okx-web3-passphrase').value.trim();
+  if (!apiKey || !apiSecret || !passphrase) {
+    toast('请填写 OKX Web3 Key / Secret / Passphrase', false);
+    return;
+  }
+  try {
+    await api('PUT', '/onchain/settings', {
+      okx_web3_api_key: apiKey,
+      okx_web3_api_secret: apiSecret,
+      okx_web3_passphrase: passphrase,
+    });
+    ['okx-web3-key', 'okx-web3-secret', 'okx-web3-passphrase'].forEach(id => { $(id).value = ''; });
+    toast('OKX Web3 配置已保存到数据库');
+    loadOnchainSettings();
+  } catch (e) { toast(e.message, false); }
+}
+
 async function loadOnchainSettings() {
   try {
     const [settings, wallets] = await Promise.all([
@@ -811,6 +857,7 @@ async function loadOnchainSettings() {
     crosschainChains = settings.settings?.chains || [];
     crosschainWallets = wallets.wallets || [];
     $('lz-api-status').textContent = `LayerZero API Key: ${settings.settings?.has_layerzero_api_key ? '已保存' : '未保存'}`;
+    loadOkxWeb3ConfigView(settings.settings);
     const list = $('wallet-list');
     if (!crosschainWallets.length) {
       list.innerHTML = '<div class="text-gray-500 text-sm">暂无链上钱包</div>';
@@ -1011,7 +1058,7 @@ async function showAddrPicker() {
   if (!picker.classList.contains('hidden')) { picker.classList.add('hidden'); return; }
   try {
     const d = await api('GET', '/addresses');
-    _pickerAddrs = d.addresses;
+    _pickerAddrs = d.addresses || [];
     if (!_pickerAddrs.length) {
       picker.innerHTML = '<div class="px-3 py-2 text-gray-400 text-sm">无地址</div>';
     } else {
@@ -1386,19 +1433,22 @@ function getCrosschainDestinationChains() {
   );
 }
 
-function renderCrosschainChainSelect(selectId, chains, selectedValue = '') {
+function renderCrosschainChainSelect(selectId, chains, selectedValue = '', placeholder = '') {
   const select = $(selectId);
   if (!select) return;
   const sorted = sortCrosschainChains(chains);
-  select.innerHTML = sorted.map(c => `<option value="${esc(c.name)}">${esc(getCrosschainChainLabel(c))}</option>`).join('');
+  const placeholderOption = placeholder ? `<option value="">${esc(placeholder)}</option>` : '';
+  select.innerHTML = placeholderOption + sorted.map(c => `<option value="${esc(c.name)}">${esc(getCrosschainChainLabel(c))}</option>`).join('');
   if (selectedValue && sorted.some(c => c.name === selectedValue)) {
     select.value = selectedValue;
+  } else if (placeholder) {
+    select.value = '';
   } else if (!select.value && sorted[0]) {
     select.value = sorted[0].name;
   }
 }
 
-function filterCrosschainChainSelect(selectId, query, chains = crosschainChains) {
+function filterCrosschainChainSelect(selectId, query, chains = crosschainChains, placeholder = '') {
   const select = $(selectId);
   if (!select) return;
   const previous = select.value;
@@ -1407,7 +1457,7 @@ function filterCrosschainChainSelect(selectId, query, chains = crosschainChains)
     const haystack = `${c.name || ''} ${c.label || ''}`.toLowerCase();
     return !normalized || haystack.includes(normalized);
   });
-  renderCrosschainChainSelect(selectId, filtered.length ? filtered : chains, previous);
+  renderCrosschainChainSelect(selectId, filtered.length ? filtered : chains, previous, placeholder);
   if (select.value !== previous) {
     select.dispatchEvent(new Event('change'));
   }
@@ -2073,7 +2123,19 @@ function onD2cCrosschainToggle() {
       renderCrosschainChainSelect('d2c-dst-chain', crosschainChains, '');
       renderCrosschainChainSelect('d2c-src-chain', crosschainChains, '');
     }
-    updateDexToCexRoute();
+    loadDexToCexChainAssets('crosschain');
+  } else {
+    $('d2c-direct-chain').value = '';
+    resetDexToCexAssetSelection('direct', '请选择区块链');
+  }
+}
+
+function onDexToCexWalletChange() {
+  if ($('d2c-crosschain').checked) {
+    resetDexToCexAssetSelection('crosschain', '请选择源链');
+  } else {
+    $('d2c-direct-chain').value = '';
+    resetDexToCexAssetSelection('direct', '请选择区块链');
   }
 }
 
@@ -2115,11 +2177,148 @@ async function populateDexToCexSelects() {
   }
   const directChainSel = document.getElementById('d2c-direct-chain');
   if (directChainSel.options.length <= 1 && crosschainChains.length) {
-    renderCrosschainChainSelect('d2c-direct-chain', crosschainChains, '');
+    renderCrosschainChainSelect('d2c-direct-chain', crosschainChains, '', '选择区块链');
   }
   if ($('d2c-src-chain').options.length <= 1 && crosschainChains.length) {
     renderCrosschainChainSelect('d2c-src-chain', crosschainChains, '');
     renderCrosschainChainSelect('d2c-dst-chain', crosschainChains, '');
+  }
+  await loadD2cDepositAddressBook();
+  if (!$('d2c-crosschain').checked && !$('d2c-direct-chain').value) {
+    resetDexToCexAssetSelection('direct', '请选择区块链');
+  }
+}
+
+async function loadD2cDepositAddressBook() {
+  try {
+    const d = await api('GET', '/addresses');
+    d2cDepositAddresses = d.addresses || [];
+    ['d2c-deposit-address-book', 'd2c-deposit-address-book-cc'].forEach((id) => {
+      const select = $(id);
+      if (!select) return;
+      select.innerHTML = '<option value="">从地址簿选择</option>' +
+        d2cDepositAddresses.map((a, i) => `<option value="${i}">${esc(a.label)} (${esc(a.address.slice(0, 6))}...${esc(a.address.slice(-4))})</option>`).join('');
+    });
+  } catch (e) { toast(e.message, false); }
+}
+
+function pickD2cDepositAddress(mode) {
+  const isCrosschain = mode === 'crosschain';
+  const select = $(isCrosschain ? 'd2c-deposit-address-book-cc' : 'd2c-deposit-address-book');
+  const input = $(isCrosschain ? 'd2c-deposit-address-cc' : 'd2c-deposit-address');
+  const idx = parseInt(select.value, 10);
+  const entry = d2cDepositAddresses[idx];
+  if (!entry) {
+    input.value = '';
+    return;
+  }
+  input.value = entry.address;
+}
+
+function getDexToCexDeploymentAddress(deployment) {
+  return deployment?.innerTokenAddress || deployment?.address || '';
+}
+
+function getSelectedDexToCexWalletAddress() {
+  const walletId = $('d2c-wallet').value;
+  return crosschainWallets.find(w => w.id === walletId)?.address || '';
+}
+
+async function loadOkxDexToCexChainAssets(chain) {
+  const walletId = $('d2c-wallet').value;
+  if (!walletId) {
+    throw new Error('请先选择链上钱包');
+  }
+  const d = await api('GET', `/onchain/okx-web3/balances?wallet_id=${encodeURIComponent(walletId)}&chain=${encodeURIComponent(chain)}`);
+  return (d.tokens || [])
+    .map(token => {
+      return {
+        symbol: token.symbol || 'TOKEN',
+        name: token.name || token.symbol || 'TOKEN',
+        balance: token.balance || '',
+        deployment: { address: token.token_address },
+      };
+    })
+    .filter(asset => getDexToCexDeploymentAddress(asset.deployment));
+}
+
+function renderDexToCexAssetSelect(mode) {
+  const isCrosschain = mode === 'crosschain';
+  const select = $(isCrosschain ? 'd2c-token-select' : 'd2c-direct-token-select');
+  const assets = dexToCexAssets[mode] || [];
+  if (!select) return;
+  if (!assets.length) {
+    select.innerHTML = '<option value="">该链暂无可选资产</option>';
+    return;
+  }
+  select.innerHTML = '<option value="">选择资产</option>' + assets.map((asset, index) => {
+    const address = getDexToCexDeploymentAddress(asset.deployment);
+    const balance = asset.balance ? ` ｜ 余额 ${asset.balance}` : '';
+    const label = `${asset.symbol} - ${asset.name || asset.symbol}${balance}`;
+    return `<option value="${index}">${esc(label)} (${esc(address.slice(0, 6))}...${esc(address.slice(-4))})</option>`;
+  }).join('');
+}
+
+function resetDexToCexAssetSelection(mode, message) {
+  dexToCexAssets[mode] = [];
+  const isCrosschain = mode === 'crosschain';
+  const select = $(isCrosschain ? 'd2c-token-select' : 'd2c-direct-token-select');
+  if (select) select.innerHTML = `<option value="">${esc(message)}</option>`;
+  const tokenInput = $(isCrosschain ? 'd2c-token' : 'd2c-direct-token');
+  const symbolInput = $(isCrosschain ? 'd2c-symbol-cc' : 'd2c-symbol');
+  if (tokenInput) tokenInput.value = '';
+  if (symbolInput) symbolInput.value = '';
+}
+
+async function loadDexToCexChainAssets(mode) {
+  const isCrosschain = mode === 'crosschain';
+  const chain = $(isCrosschain ? 'd2c-src-chain' : 'd2c-direct-chain')?.value;
+  const select = $(isCrosschain ? 'd2c-token-select' : 'd2c-direct-token-select');
+  if (!select) return;
+  if (!chain) {
+    resetDexToCexAssetSelection(mode, isCrosschain ? '请选择源链' : '请选择区块链');
+    return;
+  }
+  if (mode === 'direct' && !getSelectedDexToCexWalletAddress()) {
+    select.innerHTML = '<option value="">先选择链上钱包</option>';
+    return;
+  }
+  select.innerHTML = '<option value="">读取链上资产中...</option>';
+  dexToCexAssets[mode] = [];
+  try {
+    if (mode === 'direct') {
+      dexToCexAssets[mode] = await loadOkxDexToCexChainAssets(chain);
+    } else {
+      const d = await api('GET', `/crosschain/ofts?chain_name=${encodeURIComponent(chain)}`);
+      dexToCexAssets[mode] = (d.tokens || [])
+        .map(token => ({
+          symbol: token.symbol,
+          name: token.name,
+          deployment: token.deployments?.[chain],
+        }))
+        .filter(asset => asset.deployment && getDexToCexDeploymentAddress(asset.deployment));
+    }
+    renderDexToCexAssetSelect(mode);
+  } catch (e) {
+    select.innerHTML = '<option value="">资产读取失败</option>';
+    toast(e.message, false);
+  }
+}
+
+async function selectDexToCexAsset(mode) {
+  const isCrosschain = mode === 'crosschain';
+  const select = $(isCrosschain ? 'd2c-token-select' : 'd2c-direct-token-select');
+  const asset = (dexToCexAssets[mode] || [])[parseInt(select.value, 10)];
+  if (!asset) return;
+  const tokenAddress = getDexToCexDeploymentAddress(asset.deployment);
+  if (isCrosschain) {
+    $('d2c-token').value = tokenAddress;
+    $('d2c-symbol-cc').value = asset.symbol || '';
+    lastDexToCexAutoDstToken = '';
+    await discoverDexToCexRoutes();
+  } else {
+    $('d2c-direct-token').value = tokenAddress;
+    $('d2c-symbol').value = asset.symbol || '';
   }
 }
 
@@ -2210,8 +2409,8 @@ function updateDexToCexRoute() {
     dstTokenInput.value = suggestedToken;
     lastDexToCexAutoDstToken = suggestedToken;
   }
-  if (selectedDexToCexRoute?.symbol && !$('d2c-symbol').value.trim()) {
-    $('d2c-symbol').value = selectedDexToCexRoute.symbol;
+  if (selectedDexToCexRoute?.symbol && !$('d2c-symbol-cc').value.trim()) {
+    $('d2c-symbol-cc').value = selectedDexToCexRoute.symbol;
   }
   $('d2c-route-meta').textContent = selectedDexToCexRoute
     ? `路线: ${selectedDexToCexRoute.symbol || 'TRANSFER'} ${selectedDexToCexRoute.srcChain} -> ${selectedDexToCexRoute.dstChain}`
@@ -2288,7 +2487,9 @@ async function previewDexToCexArbitrage() {
 }
 
 async function startDexToCexArbitrage() {
-  const interval = parseInt($('d2c-interval').value, 10) || 60;
+  const interval = $('d2c-crosschain').checked
+    ? (parseInt($('d2c-interval-cc').value, 10) || 60)
+    : (parseInt($('d2c-interval').value, 10) || 60);
   try {
     const r = await api('POST', '/arbitrage/dex-to-cex/start', getDexToCexArbitrageBody());
     _schCurrentJobId = r.job.id;

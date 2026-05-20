@@ -75,7 +75,11 @@ export function crosschainRoutes(session: SessionManager): Router {
   router.get("/ofts", async (req, res) => {
     try {
       const symbol = typeof req.query.symbol === "string" ? req.query.symbol : undefined;
-      const tokens = await listOfts({ symbol });
+      const chainName = typeof req.query.chain_name === "string" ? req.query.chain_name.trim() : "";
+      const tokens = await listOfts({
+        symbol,
+        chainNames: chainName ? [chainName] : undefined,
+      });
       res.json({ ok: true, tokens });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
