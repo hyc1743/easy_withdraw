@@ -2,16 +2,27 @@ import { Router } from "express";
 import type { SessionManager } from "../security.js";
 import { ensureRuntimeHydrated, hydrateTask } from "../tasks/hydration.js";
 import { taskRuntime } from "../tasks/runtime.js";
-import { appendTaskLog, deleteTaskJob, loadLatestTask, loadTaskJob, persistTaskJob } from "../tasks/store.js";
+import { appendTaskLog, listTaskJobs, deleteTaskJob, loadLatestTask, loadTaskJob, persistTaskJob } from "../tasks/store.js";
 import type { TaskJobType } from "../tasks/types.js";
 
 export function taskRoutes(session: SessionManager): Router {
   const router = Router();
 
+  router.get("/", (req, res) => {
+    try {
+      ensureRuntimeHydrated(session, req);
+      const jobs = listTaskJobs().map(job => taskRuntime.getTask(job.id) ?? job);
+      res.json({ ok: true, jobs });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
+    }
+  });
+
   router.get("/active", (req, res) => {
     try {
       ensureRuntimeHydrated(session, req);
-      res.json({ ok: true, job: taskRuntime.getActiveTask() });
+      res.json({ ok: true, job: taskRuntime.getActiveTask(), jobs: taskRuntime.getActiveTasks() });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ ok: false, error: "BAD_REQUEST", message });
@@ -93,16 +104,6 @@ export function taskRoutes(session: SessionManager): Router {
   router.post("/:id/resume", (req, res) => {
     try {
       ensureRuntimeHydrated(session, req);
-      const active = taskRuntime.getActiveTask();
-      if (active && active.id !== req.params.id) {
-        res.status(409).json({
-          ok: false,
-          error: "SCHEDULE_RUNNING",
-          message: "已有其他任务在运行，请先停止",
-        });
-        return;
-      }
-
       let task = taskRuntime.getTask(req.params.id);
       if (!task) {
         const persisted = loadTaskJob(req.params.id);
@@ -115,6 +116,11 @@ export function taskRoutes(session: SessionManager): Router {
           return;
         }
         task = hydrateTask(persisted, session, req);
+      }
+
+      if (taskRuntime.hasConflict(task)) {
+        res.status(409).json({ ok: false, error: "SCHEDULE_RUNNING", message: "已有其他类型任务在运行，请先停止" });
+        return;
       }
 
       if (task.state === "completed") {

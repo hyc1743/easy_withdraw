@@ -207,3 +207,14 @@ export function loadLatestTask(
     LIMIT 1`,
   );
 }
+
+
+// Include every running task and the most recent stopped/completed tasks.
+export function listTaskJobs(): TaskJob[] {
+  const rows = db.prepare(`
+    SELECT * FROM schedule_jobs WHERE state = 'running'
+    OR id IN (SELECT id FROM schedule_jobs ORDER BY created_at DESC LIMIT 100)
+    ORDER BY created_at DESC
+  `).all() as TaskJobRow[];
+  return rows.map(normalizeTaskJobRow);
+}

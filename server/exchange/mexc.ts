@@ -7,6 +7,7 @@ import type {
   ExchangeAdapter,
   MarketSellOrderResult,
   SpotSymbolInfo,
+  SpotTrade,
   WithdrawRequest,
   WithdrawResponse,
 } from "./types.js";
@@ -414,5 +415,47 @@ export class MexcAdapter implements ExchangeAdapter {
       avg_price: avgPrice,
       raw: shouldQueryOrder ? { submit: submitRaw, order } : submitRaw,
     };
+  }
+
+  // Official: GET /api/v3/myTrades, only the past month, max 100 records.
+  // https://mexcdevelop.github.io/apidocs/spot_v3_en/#account-trade-list
+  async getSpotTrades(
+    symbol: string,
+    startTime: number,
+    endTime: number,
+    creds: DecryptedCreds,
+  ): Promise<SpotTrade[]> {
+    if (startTime < Date.now() - 31 * 24 * 60 * 60 * 1000) {
+      throw new Error("MEXC 官方接口仅支持查询最近 1 个月的成交记录");
+    }
+    type MexcTrade = {
+      symbol?: string; id?: string; orderId?: string; price?: string; qty?: string; quoteQty?: string;
+      commission?: string; commissionAsset?: string; time?: number; isBuyer?: boolean; isMaker?: boolean;
+    };
+    const result = new Map<string, MexcTrade>();
+    const fetchRange = async (from: number, to: number, depth = 0): Promise<void> => {
+      const raw = await mexcSignedRequest("GET", "/api/v3/myTrades", creds, {
+        symbol: symbol.toUpperCase(), startTime: String(from), endTime: String(to), limit: "100",
+      });
+      const rows = unwrapMexcArray<MexcTrade>(raw);
+      if (rows.length < 100) {
+        for (const row of rows) if (row.id !== undefined) result.set(String(row.id), row);
+        return;
+      }
+      if (from >= to || depth >= 24) {
+        throw new Error("MEXC 在极短时间内返回超过 100 笔成交，官方接口无法继续分页");
+      }
+      const middle = Math.floor((from + to) / 2);
+      await fetchRange(from, middle, depth + 1);
+      await fetchRange(middle + 1, to, depth + 1);
+    };
+    await fetchRange(startTime, endTime);
+    return [...result.values()].map((row) => ({
+      symbol: row.symbol ?? symbol.toUpperCase(), trade_id: String(row.id ?? ""),
+      order_id: String(row.orderId ?? ""), price: row.price ?? "0", quantity: row.qty ?? "0",
+      quote_quantity: row.quoteQty ?? (Number(row.price ?? 0) * Number(row.qty ?? 0)).toString(),
+      commission: row.commission ?? "0", commission_asset: row.commissionAsset ?? "",
+      time: row.time ?? 0, is_buyer: row.isBuyer ?? false, is_maker: row.isMaker ?? false,
+    })).filter((row) => row.time >= startTime && row.time <= endTime).sort((a, b) => a.time - b.time);
   }
 }

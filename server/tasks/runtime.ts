@@ -15,6 +15,7 @@ interface RuntimeEntry {
   job: TaskJob;
   executeRound: TaskExecutor;
   timer: ReturnType<typeof setTimeout> | null;
+  executing?: boolean;
 }
 
 interface TaskRuntimeOptions {
@@ -24,12 +25,11 @@ interface TaskRuntimeOptions {
 
 export class TaskRuntime {
   private tasks = new Map<string, RuntimeEntry>();
-  private activeTaskId: string | null = null;
 
   constructor(private readonly options: TaskRuntimeOptions) {}
 
   startTask(job: TaskJob, executeRound: TaskExecutor): TaskJob {
-    if (this.activeTaskId && this.activeTaskId !== job.id) {
+    if (this.hasConflict(job)) {
       throw new Error("Another task is already running");
     }
 
@@ -40,7 +40,6 @@ export class TaskRuntime {
       timer: null,
     };
     this.tasks.set(job.id, entry);
-    this.activeTaskId = job.id;
     this.options.persistTask(job);
     return job;
   }
@@ -56,7 +55,6 @@ export class TaskRuntime {
       timer: null,
     });
     if (job.state === "running") {
-      this.activeTaskId = job.id;
       this.scheduleNextRun(job.id);
     }
     return job;
@@ -66,18 +64,29 @@ export class TaskRuntime {
     return this.tasks.get(jobId)?.job ?? null;
   }
 
+  getActiveTasks(): TaskJob[] {
+    return [...this.tasks.values()].map(entry => entry.job).filter(job => job.state === "running");
+  }
+
   getActiveTask(): TaskJob | null {
-    if (!this.activeTaskId) return null;
-    return this.getTask(this.activeTaskId);
+    return this.getActiveTasks()[0] ?? null;
+  }
+
+  hasConflict(job: Pick<TaskJob, "id" | "job_type">): boolean {
+    const isArbitrage = (type: string) => type === "arbitrage" || type === "dex_to_cex_arbitrage";
+    return this.getActiveTasks().some(active =>
+      active.id !== job.id && (!isArbitrage(active.job_type) || !isArbitrage(job.job_type)),
+    );
   }
 
   async runNow(jobId: string): Promise<TaskJob | null> {
     const entry = this.tasks.get(jobId);
-    if (!entry || entry.job.state !== "running") {
+    if (!entry || entry.job.state !== "running" || entry.executing) {
       return null;
     }
 
-    entry.timer = null;
+    this.clearTaskTimer(jobId);
+    entry.executing = true;
     entry.job = {
       ...entry.job,
       next_run_at: null,
@@ -85,7 +94,17 @@ export class TaskRuntime {
     };
     this.options.persistTask(entry.job);
 
-    const result = await entry.executeRound(entry.job);
+    let result: TaskExecutionResult;
+    try {
+      result = await entry.executeRound(entry.job);
+    } catch (error) {
+      result = { job: entry.job, stop: true, log: { ok: false, message: error instanceof Error ? error.message : String(error) } };
+    } finally {
+      entry.executing = false;
+    }
+    // A deleted task must never be persisted again by an in-flight round.
+    if (this.tasks.get(jobId) !== entry) return null;
+    const wasStopped = entry.job.state !== "running";
     entry.job = {
       ...result.job,
       updated_at: new Date().toISOString(),
@@ -102,20 +121,20 @@ export class TaskRuntime {
       this.options.appendLog(entry.job.id, logRecord.ok, logRecord.message);
     }
 
-    if (result.complete) {
+    if (wasStopped) {
+      entry.job = { ...entry.job, state: "stopped", next_run_at: null };
+    } else if (result.complete) {
       entry.job = {
         ...entry.job,
         state: "completed",
         next_run_at: null,
       };
-      this.activeTaskId = this.activeTaskId === entry.job.id ? null : this.activeTaskId;
     } else if (result.stop) {
       entry.job = {
         ...entry.job,
         state: "stopped",
         next_run_at: null,
       };
-      this.activeTaskId = this.activeTaskId === entry.job.id ? null : this.activeTaskId;
     } else {
       const delaySec = result.next_delay_sec ?? entry.job.interval_sec;
       entry.job = {
@@ -148,14 +167,15 @@ export class TaskRuntime {
     if (entry.job.logs.length > 200) entry.job.logs.length = 200;
     this.options.appendLog(jobId, false, reason);
     this.options.persistTask(entry.job);
-    this.activeTaskId = this.activeTaskId === jobId ? null : this.activeTaskId;
     return entry.job;
   }
 
   resumeTask(jobId: string): TaskJob | null {
     const entry = this.tasks.get(jobId);
     if (!entry) return null;
-    if (this.activeTaskId && this.activeTaskId !== jobId) {
+    if (entry.executing) throw new Error("任务正在完成当前操作，请稍后继续");
+    if (entry.job.state === "running") return entry.job;
+    if (this.hasConflict(entry.job)) {
       throw new Error("Another task is already running");
     }
     entry.job = {
@@ -164,7 +184,6 @@ export class TaskRuntime {
       next_run_at: null,
       updated_at: new Date().toISOString(),
     };
-    this.activeTaskId = jobId;
     this.options.persistTask(entry.job);
     void this.runNow(jobId);
     return entry.job;
@@ -175,12 +194,7 @@ export class TaskRuntime {
     if (!entry) return null;
     this.clearTaskTimer(jobId);
     this.tasks.delete(jobId);
-    this.activeTaskId = this.activeTaskId === jobId ? null : this.activeTaskId;
     return entry.job;
-  }
-
-  clearActiveTask(): void {
-    this.activeTaskId = null;
   }
 
   private clearTaskTimer(jobId: string): void {

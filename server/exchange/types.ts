@@ -54,9 +54,14 @@ export interface SpotSymbolInfo {
   base_asset: string;
   quote_asset: string;
   min_qty: string;
+  max_qty?: string;
   step_size: string;
   min_quote_amount?: string;
   last_price?: string;
+  quote_order_qty_market_allowed?: boolean;
+  market_avg_price_mins?: number;
+  market_reference_price?: string;
+  market_reference_price_source?: "reference_price" | "average_price" | "last_price";
 }
 
 export interface MarketSellOrderResult {
@@ -67,6 +72,21 @@ export interface MarketSellOrderResult {
   quote_qty: string;
   avg_price: string;
   raw: unknown;
+}
+
+export interface SpotTrade {
+  symbol: string;
+  trade_id: string;
+  order_id: string;
+  price: string;
+  quantity: string;
+  quote_quantity: string;
+  commission: string;
+  commission_asset: string;
+  commissions?: Array<{ asset: string; amount: string }>;
+  time: number;
+  is_buyer: boolean;
+  is_maker: boolean;
 }
 
 export interface ExchangeAdapter {
@@ -96,4 +116,15 @@ export interface ExchangeAdapter {
     quantity: string,
     creds: DecryptedCreds,
   ): Promise<MarketSellOrderResult>;
+  placeMarketSellOrderByQuoteAmount?(
+    symbol: string,
+    quoteAmount: string,
+    creds: DecryptedCreds,
+  ): Promise<MarketSellOrderResult>;
+  getSpotTrades?(
+    symbol: string,
+    startTime: number,
+    endTime: number,
+    creds: DecryptedCreds,
+  ): Promise<SpotTrade[]>;
 }

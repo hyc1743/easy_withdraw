@@ -32,12 +32,77 @@ interface StartScheduleBody {
   withdraw: WithdrawRequest;
 }
 
+interface StartArbitrageBody {
+  interval_sec?: unknown;
+  threshold_amount?: unknown;
+  withdraw?: Partial<WithdrawRequest>;
+  crosschain?: ArbitrageTaskPayload["crosschain"];
+}
+
+type NormalizedArbitrageWithdraw = Omit<WithdrawRequest, "amount"> & {
+  amount?: string;
+};
+
+interface NormalizedArbitrageStartBody {
+  interval_sec: number;
+  threshold_amount: string;
+  withdraw: NormalizedArbitrageWithdraw;
+  crosschain?: ArbitrageTaskPayload["crosschain"];
+}
+
 function parsePositiveInt(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error("interval_sec and count must be positive integers");
   }
   return parsed;
+}
+
+function parseThresholdAmount(value: unknown): string {
+  const threshold = String(value ?? "").trim();
+  const parsed = Number(threshold);
+  if (!threshold || !Number.isFinite(parsed) || parsed < 0) {
+    throw new Error("threshold_amount must be a non-negative number");
+  }
+  return threshold;
+}
+
+export function normalizeArbitrageStartBody(body: StartArbitrageBody): NormalizedArbitrageStartBody {
+  const withdraw = body.withdraw;
+  const accountId = String(withdraw?.account_id ?? "").trim();
+  const asset = String(withdraw?.asset ?? "").trim();
+  const network = String(withdraw?.network ?? "").trim();
+  const address = String(withdraw?.address ?? "").trim();
+  if (!accountId || !asset || !network || !address) {
+    throw new Error("withdraw.account_id, asset, network, and address are required");
+  }
+
+  const thresholdAmount = parseThresholdAmount(body.threshold_amount);
+  const intervalSec = body.interval_sec === undefined
+    ? 60
+    : Number(body.interval_sec);
+  if (!Number.isInteger(intervalSec) || intervalSec <= 0) {
+    throw new Error("interval_sec must be a positive integer");
+  }
+
+  const addressTag = withdraw?.address_tag === undefined || withdraw.address_tag === null
+    ? null
+    : String(withdraw.address_tag).trim() || null;
+
+  return {
+    interval_sec: intervalSec,
+    threshold_amount: thresholdAmount,
+    // The withdrawal amount is intentionally omitted. The task fills it from
+    // the live available balance immediately before each withdrawal.
+    withdraw: {
+      account_id: accountId,
+      asset,
+      network,
+      address,
+      address_tag: addressTag,
+    },
+    crosschain: body.crosschain,
+  };
 }
 
 function toWithdrawScheduleJobView(job: TaskJob): ScheduleJobView {
@@ -310,21 +375,25 @@ export function withdrawRoutes(session: SessionManager): Router {
   router.post("/arbitrage/preview", async (req, res) => {
     try {
       const { account_id, asset, threshold_amount } = req.body as {
-        account_id: string;
-        asset: string;
-        threshold_amount: string;
+        account_id?: unknown;
+        asset?: unknown;
+        threshold_amount?: unknown;
       };
-      if (!account_id || !asset) {
+      const accountId = String(account_id ?? "").trim();
+      const assetName = String(asset ?? "").trim();
+      if (!accountId || !assetName) {
         throw new Error("account_id and asset are required");
       }
-      const context = resolveAccountContext(account_id, session, req);
-      const balance = await context.adapter.getBalance(asset, context.creds);
-      const threshold = Number(threshold_amount ?? 0);
+      const thresholdAmount = parseThresholdAmount(threshold_amount);
+      const context = resolveAccountContext(accountId, session, req);
+      const balance = await context.adapter.getBalance(assetName, context.creds);
+      const threshold = Number(thresholdAmount);
+      const balanceAvailable = Number(balance.available);
       res.json({
         ok: true,
         balance_available: balance.available,
-        threshold_amount: threshold_amount,
-        will_withdraw: Number(balance.available) > threshold,
+        threshold_amount: thresholdAmount,
+        will_withdraw: balanceAvailable > 0 && balanceAvailable >= threshold,
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -335,7 +404,7 @@ export function withdrawRoutes(session: SessionManager): Router {
   router.post("/arbitrage/start", async (req, res) => {
     try {
       ensureRuntimeHydrated(session, req);
-      if (taskRuntime.getActiveTask()) {
+      if (taskRuntime.hasConflict({ id: "", job_type: "arbitrage" })) {
         res.status(409).json({
           ok: false,
           error: "SCHEDULE_RUNNING",
@@ -344,27 +413,12 @@ export function withdrawRoutes(session: SessionManager): Router {
         return;
       }
 
-      const body = req.body as {
-        interval_sec: number;
-        threshold_amount: string;
-        withdraw: WithdrawRequest;
-        crosschain?: ArbitrageTaskPayload["crosschain"];
-      };
+      const body = normalizeArbitrageStartBody(req.body as StartArbitrageBody);
 
-      if (!body.withdraw?.account_id || !body.threshold_amount) {
-        throw new Error("withdraw.account_id and threshold_amount are required");
-      }
-
-      const context = resolveAccountContext(body.withdraw.account_id, session, req);
-      const withdrawReq: WithdrawRequest = {
-        account_id: body.withdraw.account_id,
-        asset: body.withdraw.asset,
-        network: body.withdraw.network,
-        address: body.withdraw.address,
-        address_tag: body.withdraw.address_tag ?? null,
-        amount: "0",
-      };
-      await context.adapter.validateRequest(withdrawReq);
+      // Do not validate a placeholder amount here. Every adapter correctly
+      // rejects zero; the executor validates the live balance-derived amount
+      // immediately before submitting the actual withdrawal.
+      resolveAccountContext(body.withdraw.account_id, session, req);
 
       const now = new Date().toISOString();
       const arbPayload: ArbitrageTaskPayload = {
@@ -374,7 +428,7 @@ export function withdrawRoutes(session: SessionManager): Router {
         address: body.withdraw.address,
         address_tag: body.withdraw.address_tag ?? null,
         threshold_amount: body.threshold_amount,
-        interval_sec: Number(body.interval_sec) || 60,
+        interval_sec: body.interval_sec,
         crosschain: body.crosschain,
       };
 

@@ -13,12 +13,13 @@
 <body class="bg-gray-900 text-gray-100 min-h-screen">
 
 <!-- Nav -->
-<nav class="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center gap-6">
+<nav class="bg-gray-800 border-b border-gray-700 px-4 md:px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
   <span class="text-lg font-bold text-white">Easy Withdraw</span>
   <button onclick="showView('accounts')" class="nav-btn text-gray-400 hover:text-white" id="nav-accounts">账户</button>
   <button onclick="showView('addressbook')" class="nav-btn text-gray-400 hover:text-white" id="nav-addressbook">地址簿</button>
   <button onclick="showView('withdraw')" class="nav-btn text-gray-400 hover:text-white" id="nav-withdraw">搬砖</button>
   <button onclick="showView('sell')" class="nav-btn text-gray-400 hover:text-white" id="nav-sell">卖出</button>
+  <button onclick="showView('analytics')" class="nav-btn text-gray-400 hover:text-white" id="nav-analytics">盈亏分析</button>
   <button onclick="showView('crosschain')" class="nav-btn text-gray-400 hover:text-white" id="nav-crosschain">跨链</button>
   <button onclick="showView('history')" class="nav-btn text-gray-400 hover:text-white" id="nav-history">历史</button>
   <div class="ml-auto">
@@ -143,6 +144,11 @@
   <!-- Withdraw View -->
   <div id="view-withdraw" class="view">
     <h2 class="text-xl font-semibold mb-4">搬砖</h2>
+    <section class="bg-gray-800 border border-gray-700 rounded p-4 mb-4">
+      <h3 class="font-semibold mb-2">搬砖任务列表</h3>
+      <p class="text-xs text-gray-400 mb-3">填写下方配置后添加并启动任务，可同时运行多个搬砖任务。点击任务查看详细进度。</p>
+      <div id="arb-task-list" class="space-y-2" aria-live="polite">暂无搬砖任务</div>
+    </section>
     <!-- Template bar -->
     <div class="flex gap-2 mb-4">
       <select id="w-tpl" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
@@ -179,8 +185,12 @@
       </div>
       <div id="addr-picker" class="hidden bg-gray-700 border border-gray-600 rounded mb-3 max-h-48 overflow-y-auto"></div>
       <input id="w-tag" placeholder="地址标签 / Memo (可选)" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 mb-3 text-sm">
+      <div class="flex items-center justify-between mb-1">
+        <label for="w-amount" class="text-xs text-gray-400">单次提现数量</label>
+        <span class="text-xs text-amber-400">自动搬砖无需填写，达阈值后按可用余额全额提现</span>
+      </div>
       <div class="flex gap-2 mb-1">
-        <input id="w-amount" placeholder="金额" type="number" step="any" oninput="updateFeeEstimateView()" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <input id="w-amount" placeholder="单次提现金额（自动搬砖忽略）" type="number" step="any" oninput="updateFeeEstimateView()" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
         <button onclick="fillMaxAmount()" type="button" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm whitespace-nowrap">Max</button>
       </div>
       <div id="w-balance" class="text-xs text-gray-400 mb-3">可用余额: --</div>
@@ -198,7 +208,7 @@
       <div class="border-t border-gray-700 pt-4 mt-2 mb-3">
         <div class="flex items-center gap-2 mb-3">
           <span class="text-sm font-semibold text-amber-400">搬砖自动提现</span>
-          <span class="text-xs text-gray-500">(余额超阈值时全额提现，循环执行)</span>
+          <span class="text-xs text-gray-500">(余额达到阈值时全额提现，循环执行)</span>
         </div>
         <div class="flex gap-3 mb-3">
           <div class="flex-1">
@@ -207,7 +217,7 @@
           </div>
           <div class="flex-1">
             <label class="text-xs text-gray-400">触发阈值</label>
-            <input id="arb-threshold" type="number" step="any" min="0" placeholder="余额大于此值时提现" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+            <input id="arb-threshold" type="number" step="any" min="0" placeholder="余额达到此值时提现" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
           </div>
         </div>
         <div class="flex items-center gap-2 mb-3">
@@ -249,7 +259,7 @@
           </div>
         </div>
         <div class="flex gap-3">
-          <button onclick="startArbitrage()" id="btn-arb-start" class="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 rounded text-sm font-semibold">开始搬砖</button>
+          <button onclick="startArbitrage()" id="btn-arb-start" class="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 rounded text-sm font-semibold">添加并启动任务</button>
           <button onclick="stopActiveTask()" id="btn-arb-stop" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm hidden">停止搬砖</button>
         </div>
         <div id="sch-status" class="mt-3 text-sm hidden"></div>
@@ -330,7 +340,7 @@
 
       <div class="flex gap-3">
         <button onclick="previewDexToCexArbitrage()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded text-sm">预校验</button>
-        <button onclick="startDexToCexArbitrage()" id="btn-d2c-start" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded text-sm font-semibold">开始 DEX 到 CEX</button>
+        <button onclick="startDexToCexArbitrage()" id="btn-d2c-start" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded text-sm font-semibold">添加并启动任务</button>
         <button onclick="stopActiveTask()" id="btn-d2c-stop" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm hidden">停止搬砖</button>
       </div>
       <div id="d2c-result" class="hidden mt-4 text-sm bg-gray-700 rounded p-3"></div>
@@ -362,6 +372,95 @@
         <button onclick="stopActiveTask()" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm">停止当前任务</button>
       </div>
       <div id="sell-result" class="hidden mt-4 text-sm bg-gray-700 rounded p-3"></div>
+    </div>
+  </div>
+
+  <!-- Trade Analytics View -->
+  <div id="view-analytics" class="view">
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-5">
+      <div>
+        <h2 class="text-xl font-semibold">现货盈亏分析</h2>
+        <p class="text-xs text-gray-400 mt-1">读取交易所现货成交记录，按币种、计价币种与时间范围汇总。</p>
+      </div>
+      <span class="text-xs text-amber-300">Binance · OKX · Bybit · Gate · Bitget · MEXC（最近 1 个月）</span>
+    </div>
+
+    <div class="bg-gray-800 rounded-lg p-4 md:p-6 mb-4 border border-gray-700">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+        <label class="block">
+          <span class="block text-xs text-gray-400 mb-1">交易所账户</span>
+          <select id="analytics-account" onchange="onAnalyticsAccountChange()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+            <option value="">选择账户</option>
+          </select>
+        </label>
+        <label class="block">
+          <span class="block text-xs text-gray-400 mb-1">币种</span>
+          <input id="analytics-asset" list="analytics-asset-options" oninput="onAnalyticsAssetChange()"
+            placeholder="搜索币种，如 BTC" autocomplete="off"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm" disabled>
+          <datalist id="analytics-asset-options"></datalist>
+        </label>
+        <label class="block">
+          <span class="block text-xs text-gray-400 mb-1">计价币种</span>
+          <select id="analytics-quote" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm" disabled>
+            <option value="">选择计价币种</option>
+          </select>
+        </label>
+        <div class="flex items-end gap-1">
+          <button type="button" onclick="setAnalyticsRange(7)" class="flex-1 bg-gray-700 hover:bg-gray-600 border border-gray-600 py-2 rounded text-xs">7 天</button>
+          <button type="button" onclick="setAnalyticsRange(30)" class="flex-1 bg-gray-700 hover:bg-gray-600 border border-gray-600 py-2 rounded text-xs">30 天</button>
+          <button type="button" onclick="setAnalyticsRange(90)" class="flex-1 bg-gray-700 hover:bg-gray-600 border border-gray-600 py-2 rounded text-xs">90 天</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+        <label class="block">
+          <span class="block text-xs text-gray-400 mb-1">开始时间</span>
+          <input id="analytics-start" type="datetime-local" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        </label>
+        <label class="block">
+          <span class="block text-xs text-gray-400 mb-1">结束时间</span>
+          <input id="analytics-end" type="datetime-local" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        </label>
+      </div>
+      <button id="analytics-query" onclick="loadTradeAnalytics()" class="w-full bg-amber-500 hover:bg-amber-400 text-gray-950 py-2.5 rounded font-semibold text-sm disabled:opacity-50">读取并计算</button>
+    </div>
+
+    <div id="analytics-empty" class="border border-dashed border-gray-700 rounded-lg py-12 px-6 text-center text-gray-400 text-sm">
+      选择一个交易所账户并搜索币种后开始分析。只读取 API 数据，不会执行交易。
+    </div>
+    <div id="analytics-results" class="hidden">
+      <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden mb-4">
+        <div class="grid grid-cols-1 lg:grid-cols-3">
+          <div class="p-5 lg:p-6 bg-gray-750 border-b lg:border-b-0 lg:border-r border-gray-700">
+            <div class="text-xs text-gray-400 mb-2">区间交易盈亏</div>
+            <div id="analytics-profit" class="text-3xl font-semibold tracking-tight">--</div>
+            <div id="analytics-profit-note" class="text-xs text-gray-500 mt-2"></div>
+          </div>
+          <div class="lg:col-span-2 grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-gray-700">
+            <div class="p-4"><div class="text-xs text-gray-500">总买入</div><div id="analytics-buy" class="mt-2 font-semibold">--</div></div>
+            <div class="p-4"><div class="text-xs text-gray-500">总卖出</div><div id="analytics-sell" class="mt-2 font-semibold">--</div></div>
+            <div class="p-4"><div class="text-xs text-gray-500">折算手续费</div><div id="analytics-fee" class="mt-2 font-semibold">--</div></div>
+            <div class="p-4"><div class="text-xs text-gray-500">成交笔数</div><div id="analytics-count" class="mt-2 font-semibold">--</div></div>
+          </div>
+        </div>
+        <div id="analytics-details" class="px-5 py-4 border-t border-gray-700 text-xs text-gray-400"></div>
+      </div>
+      <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+        <div class="px-4 py-3 flex items-center justify-between border-b border-gray-700">
+          <h3 class="text-sm font-semibold">成交明细</h3>
+          <span id="analytics-table-note" class="text-xs text-gray-500"></span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="text-xs text-gray-400 bg-gray-900/50"><tr>
+              <th class="text-left font-medium px-4 py-3">时间</th><th class="text-left font-medium px-4 py-3">方向</th>
+              <th class="text-right font-medium px-4 py-3">价格</th><th class="text-right font-medium px-4 py-3">数量</th>
+              <th class="text-right font-medium px-4 py-3">成交额</th><th class="text-right font-medium px-4 py-3">手续费</th>
+            </tr></thead>
+            <tbody id="analytics-trades" class="divide-y divide-gray-700"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -550,6 +649,8 @@ let _okxTransferAccountId = null;
 let sellSymbols = [];
 let selectedSellSymbol = null;
 let sellAccountExchangeMap = new Map();
+let analyticsSymbols = [];
+let analyticsAccountExchangeMap = new Map();
 let _lastRenderedTask = null;
 let _dismissedLatestTaskIds = {
   withdraw: null,
@@ -682,7 +783,7 @@ function toast(msg, ok = true) {
 }
 
 function syncUnlockedUI() {
-  const navs = ['accounts', 'addressbook', 'withdraw', 'sell', 'crosschain', 'history'];
+  const navs = ['accounts', 'addressbook', 'withdraw', 'sell', 'analytics', 'crosschain', 'history'];
   navs.forEach((name) => {
     const btn = $('nav-' + name);
     if (!btn) return;
@@ -712,6 +813,7 @@ function showView(name) {
     loadSellAccountSelect();
     syncSchedule();
   }
+  if (name === 'analytics') loadTradeAnalyticsSetup();
   if (name === 'crosschain') {
     loadCrosschainSetup();
     syncSchedule();
@@ -1343,15 +1445,33 @@ async function previewSellTask() {
     await ensureSelectedSellSymbol();
     const d = await api('POST', '/trade/sell/preview', getSellBody());
     const p = d.preview;
+    const referencePrice = p.symbol.market_reference_price || p.symbol.last_price || '--';
+    const referenceSource = {
+      reference_price: 'Binance 参考价',
+      average_price: 'Binance 当前均价',
+      last_price: 'Binance 最新价',
+    }[p.symbol.market_reference_price_source] || '交易所参考价';
+    const executionText = p.execution_mode === 'quote_order_qty'
+      ? `quoteOrderQty=${esc(p.quote_order_qty)} ${esc(p.symbol.quote_asset)}（预计约 ${esc(p.estimated_base_qty || '--')} ${esc(p.symbol.base_asset)}，实际数量由 Binance 按精度计算）`
+      : `quantity=${esc(p.executable_qty)} ${esc(p.symbol.base_asset)}`;
+    const adjustmentText = p.adjusted_for_min_notional
+      ? `<div class="text-amber-300 mb-1">配置数量的估算成交额不足，已自适应为 Binance 最小成交额市价单</div>`
+      : '';
+    const validationText = p.validation_message
+      ? `<div class="${p.can_execute ? 'text-gray-400' : 'text-red-400'}">说明: ${esc(p.validation_message)}</div>`
+      : '';
     $('sell-result').classList.remove('hidden');
     $('sell-result').innerHTML = `
       <div class="text-green-400 mb-1">预校验完成</div>
+      ${adjustmentText}
       <div>余额: ${esc(p.balance_available)} ${esc(p.symbol.base_asset)}</div>
       <div>计划数量: ${esc(p.requested_qty)}</div>
-      <div>可执行数量: ${esc(p.executable_qty)}</div>
-      <div>最小下单量: ${esc(p.symbol.min_qty)} ｜ 步进: ${esc(p.symbol.step_size)}</div>
-      <div>最新价: ${esc(p.symbol.last_price || '--')} ｜ 最小成交额: ${esc(p.symbol.min_quote_amount || '--')} ${esc(p.symbol.quote_asset || '')}</div>
+      <div>下单参数: ${executionText}</div>
+      <div>最小/最大下单量: ${esc(p.symbol.min_qty)} / ${esc(p.symbol.max_qty || '--')} ｜ 步进: ${esc(p.symbol.step_size)}</div>
+      <div>${esc(referenceSource)}: ${esc(referencePrice)} ｜ 配置数量估算成交额: ${esc(p.estimated_notional)} ${esc(p.symbol.quote_asset || '')}</div>
+      <div>最小成交额: ${esc(p.symbol.min_quote_amount || '--')} ${esc(p.symbol.quote_asset || '')}</div>
       <div>状态: ${esc(p.symbol.status)} ｜ 本轮可执行: ${p.can_execute ? '是' : '否'}</div>
+      ${validationText}
     `;
     await loadSellBalance();
   } catch (e) {
@@ -1371,6 +1491,164 @@ async function startSellTask() {
     toast('自动卖出任务已启动');
   } catch (e) {
     toast(e.message, false);
+  }
+}
+
+// ---- Exchange trade analytics ----
+function toLocalDateTimeValue(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function setAnalyticsRange(days) {
+  const end = new Date();
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  $('analytics-start').value = toLocalDateTimeValue(start);
+  $('analytics-end').value = toLocalDateTimeValue(end);
+}
+
+async function loadTradeAnalyticsSetup() {
+  if (!$('analytics-start').value || !$('analytics-end').value) setAnalyticsRange(30);
+  try {
+    const d = await api('GET', '/accounts');
+    const accounts = (d.accounts || []).filter((account) =>
+      ['binance', 'okx', 'bybit', 'gate', 'bitget', 'mexc'].includes(account.exchange),
+    );
+    analyticsAccountExchangeMap = new Map(accounts.map((account) => [account.id, account.exchange]));
+    const current = $('analytics-account').value;
+    $('analytics-account').innerHTML = '<option value="">选择交易所账户</option>' +
+      accounts.map((account) => `<option value="${esc(account.id)}">${esc(account.id)} (${esc(account.exchange)})</option>`).join('');
+    if (accounts.some((account) => account.id === current)) $('analytics-account').value = current;
+  } catch (e) { /* ignore if locked */ }
+}
+
+async function onAnalyticsAccountChange() {
+  analyticsSymbols = [];
+  $('analytics-results').classList.add('hidden');
+  $('analytics-empty').classList.remove('hidden');
+  $('analytics-asset').value = '';
+  $('analytics-asset').placeholder = '正在读取币种...';
+  $('analytics-asset-options').innerHTML = '';
+  $('analytics-asset').disabled = true;
+  $('analytics-quote').innerHTML = '<option value="">选择计价币种</option>';
+  $('analytics-quote').disabled = true;
+  const accountId = $('analytics-account').value;
+  if (!accountId) {
+    $('analytics-asset').placeholder = '搜索币种，如 BTC';
+    return;
+  }
+  try {
+    const d = await api('GET', `/trade/symbols?account_id=${encodeURIComponent(accountId)}`);
+    analyticsSymbols = d.symbols || [];
+    const assets = [...new Set(analyticsSymbols.map((symbol) => symbol.base_asset).filter(Boolean))].sort();
+    $('analytics-asset-options').innerHTML = assets.map((asset) => `<option value="${esc(asset)}"></option>`).join('');
+    $('analytics-asset').placeholder = `搜索 ${assets.length} 个币种`;
+    $('analytics-asset').disabled = false;
+  } catch (e) {
+    $('analytics-asset').placeholder = '币种读取失败';
+    toast(e.message, false);
+  }
+}
+
+function onAnalyticsAssetChange() {
+  const asset = $('analytics-asset').value.trim().toUpperCase();
+  const quotes = [...new Set(analyticsSymbols
+    .filter((symbol) => symbol.base_asset === asset)
+    .map((symbol) => symbol.quote_asset)
+    .filter(Boolean))].sort((a, b) => {
+      const preferred = ['USDT', 'USDC', 'FDUSD', 'BTC', 'ETH', 'BNB'];
+      const ai = preferred.indexOf(a);
+      const bi = preferred.indexOf(b);
+      if (ai >= 0 || bi >= 0) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+      return a.localeCompare(b);
+    });
+  $('analytics-quote').innerHTML = '<option value="">选择计价币种</option>' +
+    quotes.map((quote) => `<option value="${esc(quote)}">${esc(quote)}</option>`).join('');
+  $('analytics-quote').disabled = !quotes.length;
+  if (quotes.length) $('analytics-quote').value = quotes[0];
+}
+
+function analyticsAmount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(value || '0');
+  return number.toLocaleString('zh-CN', { maximumFractionDigits: 12 });
+}
+
+function renderTradeAnalytics(data) {
+  const summary = data.summary;
+  const symbol = data.symbol;
+  const quote = symbol.quote_asset;
+  const profit = Number(summary.profit_loss);
+  $('analytics-empty').classList.add('hidden');
+  $('analytics-results').classList.remove('hidden');
+  $('analytics-profit').textContent = `${profit > 0 ? '+' : ''}${analyticsAmount(summary.profit_loss)} ${quote}`;
+  $('analytics-profit').className = `text-3xl font-semibold tracking-tight ${profit >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+  $('analytics-profit-note').textContent = summary.profit_loss_method;
+  $('analytics-buy').textContent = `${analyticsAmount(summary.total_buy)} ${quote}`;
+  $('analytics-sell').textContent = `${analyticsAmount(summary.total_sell)} ${quote}`;
+  $('analytics-fee').textContent = `${analyticsAmount(summary.quote_equivalent_fees)} ${quote}`;
+  $('analytics-count').textContent = `${summary.trade_count} 笔`;
+  const feeText = summary.fees.length
+    ? summary.fees.map((fee) => `${analyticsAmount(fee.amount)} ${fee.asset}`).join(' · ')
+    : '0';
+  const warning = summary.unconverted_fee_assets.length
+    ? ` · ${summary.unconverted_fee_assets.join('、')} 手续费未计入盈亏（缺少历史汇率）`
+    : '';
+  $('analytics-details').innerHTML =
+    `买入 ${esc(summary.total_buy_quantity)} ${esc(symbol.base_asset)}，均价 ${esc(summary.average_buy_price)} ${esc(quote)}` +
+    ` · 卖出 ${esc(summary.total_sell_quantity)} ${esc(symbol.base_asset)}，均价 ${esc(summary.average_sell_price)} ${esc(quote)}` +
+    ` · 匹配数量 ${esc(summary.matched_quantity)} ${esc(symbol.base_asset)}` +
+    `<br>区间净现金流：${esc(analyticsAmount(summary.net_cash_flow))} ${esc(quote)} · 手续费明细：${esc(feeText)}` +
+    `<span class="text-amber-300">${esc(warning)}</span>`;
+
+  const visibleTrades = [...data.trades].reverse().slice(0, 500);
+  $('analytics-table-note').textContent = data.trades.length > 500
+    ? `共 ${data.trades.length} 笔，显示最近 500 笔`
+    : `共 ${data.trades.length} 笔`;
+  $('analytics-trades').innerHTML = visibleTrades.length ? visibleTrades.map((trade) => `
+    <tr class="hover:bg-gray-700/40">
+      <td class="px-4 py-3 whitespace-nowrap text-gray-400">${esc(new Date(trade.time).toLocaleString('zh-CN'))}</td>
+      <td class="px-4 py-3"><span class="${trade.is_buyer ? 'text-emerald-400' : 'text-red-400'}">${trade.is_buyer ? '买入' : '卖出'}</span></td>
+      <td class="px-4 py-3 text-right tabular-nums">${esc(analyticsAmount(trade.price))}</td>
+      <td class="px-4 py-3 text-right tabular-nums">${esc(analyticsAmount(trade.quantity))}</td>
+      <td class="px-4 py-3 text-right tabular-nums">${esc(analyticsAmount(trade.quote_quantity))} ${esc(quote)}</td>
+      <td class="px-4 py-3 text-right tabular-nums text-gray-400">${esc(
+        trade.commissions?.length
+          ? trade.commissions.map((fee) => `${analyticsAmount(fee.amount)} ${fee.asset}`).join(' · ')
+          : `${analyticsAmount(trade.commission)} ${trade.commission_asset}`
+      )}</td>
+    </tr>`).join('') : '<tr><td colspan="6" class="px-4 py-10 text-center text-gray-500">所选时间段没有成交记录</td></tr>';
+}
+
+async function loadTradeAnalytics() {
+  const accountId = $('analytics-account').value;
+  const asset = $('analytics-asset').value;
+  const quote = $('analytics-quote').value;
+  const symbol = analyticsSymbols.find((item) => item.base_asset === asset && item.quote_asset === quote);
+  const startTime = new Date($('analytics-start').value).getTime();
+  const endTime = new Date($('analytics-end').value).getTime();
+  if (!accountId || !symbol) return toast('请选择交易所账户、币种和计价币种', false);
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || startTime > endTime) {
+    return toast('请选择有效的开始和结束时间', false);
+  }
+  const button = $('analytics-query');
+  button.disabled = true;
+  button.textContent = `正在读取 ${analyticsAccountExchangeMap.get(accountId) || '交易所'} 成交记录...`;
+  try {
+    const params = new URLSearchParams({
+      account_id: accountId,
+      symbol: symbol.symbol,
+      start_time: String(startTime),
+      end_time: String(endTime),
+    });
+    const data = await api('GET', `/trade/history?${params.toString()}`);
+    renderTradeAnalytics(data);
+    toast(`已分析 ${data.summary.trade_count} 笔成交`);
+  } catch (e) {
+    toast(e.message, false);
+  } finally {
+    button.disabled = false;
+    button.textContent = '读取并计算';
   }
 }
 
@@ -2417,11 +2695,23 @@ function updateDexToCexRoute() {
     : '路线: --';
 }
 
+function getArbitrageWithdrawBody() {
+  const withdraw = getWithdrawBody();
+  return {
+    account_id: withdraw.account_id,
+    asset: withdraw.asset,
+    network: withdraw.network,
+    address: withdraw.address,
+    address_tag: withdraw.address_tag,
+  };
+}
+
 function getArbitrageBody() {
   const body = {
     interval_sec: parseInt($('sch-interval').value) || 60,
     threshold_amount: $('arb-threshold').value,
-    withdraw: getWithdrawBody(),
+    // Auto withdrawal derives the amount from the live exchange balance.
+    withdraw: getArbitrageWithdrawBody(),
   };
   if ($('arb-crosschain').checked) {
     body.crosschain = {
@@ -2490,33 +2780,43 @@ async function startDexToCexArbitrage() {
   const interval = $('d2c-crosschain').checked
     ? (parseInt($('d2c-interval-cc').value, 10) || 60)
     : (parseInt($('d2c-interval').value, 10) || 60);
+  const button = $('btn-d2c-start');
+  if (button.disabled) return;
+  button.disabled = true;
   try {
     const r = await api('POST', '/arbitrage/dex-to-cex/start', getDexToCexArbitrageBody());
     _schCurrentJobId = r.job.id;
     renderScheduleJob(r.job);
     startSchedulePolling();
+    await syncSchedule();
     toast(`DEX 到 CEX 搬砖任务已启动，每 ${interval}s 扫描余额`);
   } catch (e) {
     toast(e.message, false);
   }
+  finally { button.disabled = false; }
 }
 
 async function startArbitrage() {
   const interval = parseInt($('sch-interval').value) || 60;
+  const button = $('btn-arb-start');
+  if (button.disabled) return;
+  button.disabled = true;
   try {
     const r = await api('POST', '/withdraw/arbitrage/start', getArbitrageBody());
     _schCurrentJobId = r.job.id;
     renderScheduleJob(r.job);
     startSchedulePolling();
+    await syncSchedule();
     toast(`搬砖任务已启动，每 ${interval}s 扫描余额`);
   } catch (e) {
     toast(e.message, false);
   }
+  finally { button.disabled = false; }
 }
 
 function setScheduleButtons(isRunning) {
-  $('btn-arb-start').classList.toggle('hidden', isRunning);
-  $('btn-arb-stop').classList.toggle('hidden', !isRunning);
+  $('btn-arb-start').classList.remove('hidden');
+  $('btn-arb-stop').classList.add('hidden');
 }
 
 function setProgressButtons(job) {
@@ -2700,14 +3000,71 @@ function renderScheduleJob(job) {
     void loadDepositTransferHistorySummary();
   }
   setScheduleButtons(job.state === 'running' && (job.job_type === 'withdraw' || job.job_type === 'arbitrage'));
-  $('btn-d2c-start')?.classList.toggle('hidden', job.state === 'running' && job.job_type === 'dex_to_cex_arbitrage');
-  $('btn-d2c-stop')?.classList.toggle('hidden', !(job.state === 'running' && job.job_type === 'dex_to_cex_arbitrage'));
+  $('btn-d2c-start')?.classList.remove('hidden');
+  $('btn-d2c-stop')?.classList.add('hidden');
   setProgressButtons(job);
 }
 
+let _taskList = [];
+let _scheduleSyncing = false;
+
+function renderArbitrageTasks(jobs) {
+  _taskList = jobs;
+  const tasks = jobs.filter(job => ['arbitrage', 'dex_to_cex_arbitrage'].includes(job.job_type));
+  const container = $('arb-task-list');
+  container.replaceChildren();
+  if (!tasks.length) {
+    container.textContent = '暂无搬砖任务';
+    return;
+  }
+  for (const job of tasks) {
+    const row = document.createElement('div');
+    row.className = 'flex flex-wrap items-center gap-2 border border-gray-700 rounded p-3';
+    const detail = document.createElement('button');
+    detail.className = 'flex-1 min-w-0 text-left text-sm break-words';
+    const payload = job.payload || {};
+    detail.textContent = `${formatTaskType(job)} · ${payload.asset || payload.symbol || '--'} · ${payload.network || payload.src_chain || '--'} · ${formatState(job.state)[0]} · ${job.id.slice(-8)}`;
+    detail.onclick = () => {
+      _schCurrentJobId = job.id;
+      renderScheduleJob(job);
+      if (jobs.some(task => task.state === 'running')) startSchedulePolling();
+    };
+    row.append(detail);
+    if (job.state !== 'completed') {
+      const button = document.createElement('button');
+      button.className = 'text-sm px-3 py-2 rounded bg-gray-700 hover:bg-gray-600';
+      button.textContent = job.state === 'running' ? '停止' : '继续';
+      button.onclick = async () => {
+        button.disabled = true;
+        try {
+          const result = await api('POST', `/tasks/${encodeURIComponent(job.id)}/${job.state === 'running' ? 'stop' : 'resume'}`);
+          if (_schCurrentJobId === job.id) renderScheduleJob(result.job);
+          await syncSchedule();
+          startSchedulePolling();
+        } catch (e) { toast(e.message, false); }
+        finally { button.disabled = false; }
+      };
+      row.append(button);
+    }
+    container.append(row);
+  }
+}
+
 async function syncSchedule() {
+  if (_scheduleSyncing) return;
+  _scheduleSyncing = true;
   try {
-    const active = await api('GET', '/tasks/active');
+    const listing = await api('GET', '/tasks');
+    renderArbitrageTasks(listing.jobs || []);
+    const running = _taskList.filter(job => job.state === 'running');
+    const selected = _taskList.find(job => job.id === _schCurrentJobId);
+    if (selected) {
+      renderScheduleJob(selected);
+      if (running.length) startSchedulePolling();
+      else stopSchedulePolling();
+      return;
+    }
+    const active = { job: running[0] };
     if (active.job) {
       clearDismissedLatestTask(active.job);
       _schCurrentJobId = active.job.id;
@@ -2792,7 +3149,9 @@ async function syncSchedule() {
     setScheduleButtons(false);
     setProgressButtons(null);
   } catch (e) {
-    stopSchedulePolling();
+    $('arb-task-list').textContent = '任务列表加载失败：' + e.message;
+  } finally {
+    _scheduleSyncing = false;
   }
 }
 
@@ -2826,7 +3185,7 @@ async function stopActiveTask() {
     }
     const d = await api('POST', `/tasks/${encodeURIComponent(_schCurrentJobId)}/stop`);
     renderScheduleJob(d.job);
-    stopSchedulePolling();
+    await syncSchedule();
     toast('任务已停止');
   } catch (e) {
     toast(e.message, false);
@@ -2876,6 +3235,7 @@ async function terminateActiveTask() {
 
     dismissLatestTask(_lastRenderedTask);
     clearProgressPanel();
+    await syncSchedule();
     toast('当前任务已取消');
   } catch (e) {
     toast(e.message, false);

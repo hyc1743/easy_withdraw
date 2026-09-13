@@ -20,3 +20,11 @@ AGENTS.md
 # local-only project artifacts
 docs/
 tests/
+
+# Focused regression coverage shipped with the Binance adaptive-sell fix.
+!tests/
+tests/*
+!tests/binance-auto-sell-adaptive.test.ts
+
+# Multi-task arbitrage regression coverage.
+!tests/tasks-multiple-arbitrage.test.ts

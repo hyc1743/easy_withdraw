@@ -87,13 +87,22 @@ http://<TAILSCALE_IP>:4217
 
 - 当前支持 Binance / OKX / Bybit / Gate / Bitget / MEXC 现货 `MARKET SELL`
 - 输入交易对后，系统会自动识别卖出币种和目标币种，无需单独填写
-- “预校验”会检查交易对是否存在、当前余额、最小下单量、步进以及本轮可执行数量
+- “预校验”会检查交易对是否存在、当前余额、最小/最大下单量、步进、最小成交额以及本轮可执行数量
+- Binance 会在每轮重新读取官方交易规则和参考价格；若配置的基础币数量不足当前最小成交额，会自动改用该交易对的最小 `quoteOrderQty` 市价卖出，实际基础币数量由 Binance 按数量精度计算，不固定写死为 5 USDT
+- 若 Binance 全部可用余额仍不足最小成交额，任务会停止并在日志中保留余额、参考价和最小成交额
 - 若剩余余额小于单次数量，最后一轮会按剩余余额卖出
 - 任一执行错误会立即停止任务
 
+Binance 自适应卖出使用以下官方接口与规则：
+
+- [Exchange information](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/general-endpoints#exchange-information)
+- [Symbol filters](https://developers.binance.com/docs/binance-spot-api-docs/filters)
+- [Market data endpoints](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints)
+- [New order](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints#new-order-trade)
+
 ## 搬砖说明
 
-- CEX 到 DEX：余额超过阈值后从交易所提现到链上，可叠加自动跨链。
+- CEX 到 DEX：余额达到阈值后从交易所按可用余额全额提现到链上，不需要填写提现数量，可叠加自动跨链。
 - DEX 到 CEX 直充：选择链上钱包后，需要手动选择区块链；系统通过 OKX Web3 DEX 余额接口读取该链资产，然后从资产下拉框选择 Token。
 - DEX 到 CEX 跨链：勾选「叠加自动跨链」后，跨链相关设置会显示在 DEX 到 CEX 面板下方；源链资产从 LayerZero OFT 列表按链筛选，跨链到目标链后再转账到地址簿选择的 CEX 充值地址。
 - DEX 到 CEX 地址从统一地址簿选择；地址簿本身不区分充值地址和提现地址。
@@ -194,6 +203,7 @@ public/
 | GET | `/api/trade/symbols` | 列出现货交易对 |
 | GET | `/api/trade/symbol/:symbol` | 查询单个现货交易对规则 |
 | GET | `/api/trade/balance` | 查询卖出币种余额 |
+| GET | `/api/trade/history` | 查询现货成交记录并汇总买入、卖出、手续费、盈亏与净现金流（支持 Binance / OKX / Bybit / Gate / Bitget / MEXC） |
 | GET | `/api/trade/binance/symbols` | 列出现货交易对（兼容旧 Binance 路径） |
 | GET | `/api/trade/binance/symbol/:symbol` | 查询单个现货交易对规则（兼容旧 Binance 路径） |
 | GET | `/api/trade/binance/balance` | 查询卖出币种余额（兼容旧 Binance 路径） |
@@ -207,6 +217,19 @@ public/
 | GET | `/api/tasks/:id` | 查询指定任务 |
 | POST | `/api/tasks/:id/stop` | 停止任务 |
 | POST | `/api/tasks/:id/resume` | 继续已停止任务 |
+
+### 现货盈亏分析
+
+成交数据来自各交易所官方私有成交接口：
+
+- [Binance Account Trade List](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/account-endpoints#account-trade-list-user_data)
+- [OKX Transaction details (last 3 months)](https://www.okx.com/docs-v5/en/#order-book-trading-trade-get-transaction-details-last-3-months)
+- [Bybit Get Trade History](https://bybit-exchange.github.io/docs/v5/order/execution)
+- [Gate Query personal trading records](https://www.gate.com/docs/developers/apiv4/en/#list-personal-trading-history)
+- [Bitget Get Transaction Details](https://www.bitget.com/api-doc/spot/trade/Get-Fills)
+- [MEXC Account Trade List](https://mexcdevelop.github.io/apidocs/spot_v3_en/#account-trade-list)
+
+系统保留接口返回的原始手续费币种，并只将基础币或计价币手续费按成交价折算到计价币。盈亏使用区间均价法：`匹配数量 ×（卖出均价 - 买入均价）- 可折算手续费`；同时单独展示区间净现金流。该计算不包含所选开始时间之前的持仓成本。
 
 ## License
 

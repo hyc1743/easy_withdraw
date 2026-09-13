@@ -106,7 +106,7 @@ export function arbitrageRoutes(session: SessionManager): Router {
   router.post("/dex-to-cex/start", async (req, res) => {
     try {
       ensureRuntimeHydrated(session, req);
-      if (taskRuntime.getActiveTask()) {
+      if (taskRuntime.hasConflict({ id: "", job_type: "dex_to_cex_arbitrage" })) {
         res.status(409).json({
           ok: false,
           error: "SCHEDULE_RUNNING",

@@ -1,6 +1,14 @@
 import type { Request } from "express";
 import { ethers } from "ethers";
 import { loadConfig } from "../config.js";
+import {
+  addDecimalStrings,
+  ceilDecimalRatioToStep,
+  compareDecimalStrings,
+  floorDecimalToStep,
+  multiplyDecimalStrings,
+  normalizeDecimalString,
+} from "../decimal.js";
 import { adapters } from "../exchange/adapters.js";
 import { decrypt, type SessionManager } from "../security.js";
 import type {
@@ -54,12 +62,18 @@ interface WithdrawHistoryRecord {
   status: string;
 }
 
-interface SellPreviewResult {
+export interface SellPreviewResult {
   balance_available: string;
   symbol: SpotSymbolInfo;
   requested_qty: string;
   executable_qty: string;
+  execution_mode: "quantity" | "quote_order_qty";
+  quote_order_qty?: string;
+  estimated_base_qty?: string;
+  estimated_notional: string;
+  adjusted_for_min_notional: boolean;
   can_execute: boolean;
+  validation_message?: string;
   final_round: boolean;
 }
 
@@ -67,92 +81,110 @@ function isSpotSymbolSellable(symbol: SpotSymbolInfo): boolean {
   return symbol.status === "TRADING" || symbol.status === "SELLABLE";
 }
 
-function getSellNotional(quantity: string, symbol: SpotSymbolInfo): number {
-  const lastPrice = Number(symbol.last_price ?? "0");
-  const executedQty = Number(quantity);
-  if (!Number.isFinite(lastPrice) || lastPrice <= 0 || !Number.isFinite(executedQty)) {
-    return 0;
+function getSellReferencePrice(symbol: SpotSymbolInfo): string | undefined {
+  const price = symbol.market_reference_price ?? symbol.last_price;
+  if (!price) return undefined;
+  try {
+    return compareDecimalStrings(price, "0") > 0
+      ? normalizeDecimalString(price)
+      : undefined;
+  } catch {
+    return undefined;
   }
-  return lastPrice * executedQty;
 }
 
-function validateSellPreview(preview: {
-  symbol: SpotSymbolInfo;
-  executable_qty: string;
-  balance_available: string;
-}): { ok: boolean; message?: string } {
+function getSellNotional(quantity: string, symbol: SpotSymbolInfo): string {
+  const price = getSellReferencePrice(symbol);
+  if (!price) return "0";
+  try {
+    return multiplyDecimalStrings(quantity, price);
+  } catch {
+    return "0";
+  }
+}
+
+function isPositiveDecimal(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    return compareDecimalStrings(value, "0") > 0;
+  } catch {
+    return false;
+  }
+}
+
+function validateSellPreview(preview: SellPreviewResult): { ok: boolean; message?: string } {
   if (!isSpotSymbolSellable(preview.symbol)) {
     return { ok: false, message: `交易对不可交易: ${preview.symbol.status}` };
   }
 
-  if (
-    Number(preview.executable_qty) <= 0 ||
-    Number(preview.executable_qty) < Number(preview.symbol.min_qty)
-  ) {
-    return { ok: false, message: "可执行数量低于最小下单量" };
-  }
-
-  if (preview.symbol.min_quote_amount) {
-    const minQuoteAmount = Number(preview.symbol.min_quote_amount);
-    const orderNotional = getSellNotional(preview.executable_qty, preview.symbol);
-    if (
-      Number.isFinite(minQuoteAmount) &&
-      minQuoteAmount > 0 &&
-      Number.isFinite(orderNotional) &&
-      orderNotional > 0 &&
-      orderNotional < minQuoteAmount
-    ) {
-      return {
-        ok: false,
-        message: `按当前价格估算成交额约 ${orderNotional.toFixed(8).replace(/\.?0+$/, "")} ${preview.symbol.quote_asset}，低于最小 ${preview.symbol.min_quote_amount} ${preview.symbol.quote_asset}`,
-      };
-    }
-  }
-
-  if (Number(preview.balance_available) <= 0) {
+  if (!isPositiveDecimal(preview.balance_available)) {
     return { ok: false, message: "余额为 0" };
   }
 
+  const quantity = preview.execution_mode === "quote_order_qty"
+    ? preview.estimated_base_qty ?? "0"
+    : preview.executable_qty;
+  if (!isPositiveDecimal(quantity) || compareDecimalStrings(quantity, preview.symbol.min_qty) < 0) {
+    return { ok: false, message: "可执行数量低于最小下单量" };
+  }
+
+  if (
+    isPositiveDecimal(preview.symbol.max_qty) &&
+    compareDecimalStrings(quantity, preview.symbol.max_qty!) > 0
+  ) {
+    return {
+      ok: false,
+      message: `可执行数量 ${quantity} 高于最大下单量 ${preview.symbol.max_qty}`,
+    };
+  }
+
+  if (preview.execution_mode === "quote_order_qty") {
+    if (!preview.symbol.quote_order_qty_market_allowed) {
+      return { ok: false, message: "该 Binance 交易对不支持 quoteOrderQty 市价单" };
+    }
+    if (!isPositiveDecimal(preview.quote_order_qty)) {
+      return { ok: false, message: "Binance 最小成交额规则无效" };
+    }
+    if (compareDecimalStrings(preview.balance_available, quantity) < 0) {
+      const price = getSellReferencePrice(preview.symbol) ?? "0";
+      return {
+        ok: false,
+        message: `可用余额 ${preview.balance_available} ${preview.symbol.base_asset} 按参考价 ${price} 估算不足最小成交额 ${preview.quote_order_qty} ${preview.symbol.quote_asset}`,
+      };
+    }
+    return { ok: true };
+  }
+
+  if (
+    isPositiveDecimal(preview.symbol.min_quote_amount) &&
+    isPositiveDecimal(preview.estimated_notional) &&
+    compareDecimalStrings(preview.estimated_notional, preview.symbol.min_quote_amount!) < 0
+  ) {
+    return {
+      ok: false,
+      message: `按当前价格估算成交额约 ${preview.estimated_notional} ${preview.symbol.quote_asset}，低于最小 ${preview.symbol.min_quote_amount} ${preview.symbol.quote_asset}`,
+    };
+  }
   return { ok: true };
 }
 
-function formatSellPreviewDebug(preview: {
-  symbol: SpotSymbolInfo;
-  requested_qty: string;
-  executable_qty: string;
-  balance_available: string;
-}): string {
-  const orderNotional = getSellNotional(preview.executable_qty, preview.symbol);
+function formatSellPreviewDebug(preview: SellPreviewResult): string {
   return [
     `symbol=${preview.symbol.symbol}`,
     `status=${preview.symbol.status}`,
     `balance=${preview.balance_available}`,
     `requested_qty=${preview.requested_qty}`,
     `executable_qty=${preview.executable_qty}`,
+    `execution_mode=${preview.execution_mode}`,
+    `quote_order_qty=${preview.quote_order_qty ?? "0"}`,
+    `estimated_base_qty=${preview.estimated_base_qty ?? preview.executable_qty}`,
     `min_qty=${preview.symbol.min_qty}`,
+    `max_qty=${preview.symbol.max_qty ?? "0"}`,
     `step_size=${preview.symbol.step_size}`,
-    `last_price=${preview.symbol.last_price ?? "0"}`,
-    `notional=${orderNotional}`,
+    `reference_price=${getSellReferencePrice(preview.symbol) ?? "0"}`,
+    `notional=${preview.estimated_notional}`,
     `min_quote_amount=${preview.symbol.min_quote_amount ?? "0"}`,
   ].join(" ");
-}
-
-function countDecimals(value: string): number {
-  if (!value.includes(".")) return 0;
-  return value.split(".")[1].replace(/0+$/, "").length;
-}
-
-function roundDownToStep(value: string, step: string): string {
-  const decimals = Math.max(countDecimals(value), countDecimals(step));
-  const scale = 10 ** decimals;
-  const valueInt = Math.floor(Number(value) * scale);
-  const stepInt = Math.max(1, Math.floor(Number(step) * scale));
-  const roundedInt = Math.floor(valueInt / stepInt) * stepInt;
-  const formatted = (roundedInt / scale).toFixed(decimals);
-  if (!formatted.includes(".")) {
-    return formatted;
-  }
-  return formatted.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
 }
 
 export function resolveAccountContext(
@@ -268,27 +300,81 @@ export async function previewSellQuantity(
     throw new Error("Trading pair does not match selected base/quote assets");
   }
 
+  let configuredQty: string;
+  try {
+    configuredQty = normalizeDecimalString(payload.step_amount);
+  } catch {
+    throw new Error("每次卖出数量必须是有效数字");
+  }
+  if (!isPositiveDecimal(configuredQty)) {
+    throw new Error("每次卖出数量必须大于 0");
+  }
+
+  const stepSize = isPositiveDecimal(symbol.step_size)
+    ? normalizeDecimalString(symbol.step_size)
+    : "0.00000001";
+
   const balance = context.adapter.getSpotBalance
     ? await context.adapter.getSpotBalance(payload.base_asset, context.creds)
     : await context.adapter.getBalance(payload.base_asset, context.creds);
-  const requestedQty =
-    Number(balance.available) >= Number(payload.step_amount)
-      ? payload.step_amount
-      : balance.available;
-  const executableQty = roundDownToStep(requestedQty, symbol.step_size);
+  let availableQty: string;
+  try {
+    availableQty = normalizeDecimalString(balance.available);
+  } catch {
+    throw new Error("交易所返回了无效的可用余额");
+  }
+  const requestedQty = compareDecimalStrings(availableQty, configuredQty) >= 0
+    ? configuredQty
+    : availableQty;
+  const executableQty = floorDecimalToStep(requestedQty, stepSize);
+  const estimatedNotional = getSellNotional(executableQty, symbol);
+  const minQuoteAmount = isPositiveDecimal(symbol.min_quote_amount)
+    ? normalizeDecimalString(symbol.min_quote_amount!)
+    : undefined;
 
-  return {
-    balance_available: balance.available,
+  const shouldUseQuoteAmount =
+    context.exchange === "binance" &&
+    minQuoteAmount !== undefined &&
+    isPositiveDecimal(getSellReferencePrice(symbol)) &&
+    compareDecimalStrings(estimatedNotional, minQuoteAmount) < 0;
+
+  let estimatedBaseQty: string | undefined;
+  if (shouldUseQuoteAmount) {
+    const referencePrice = getSellReferencePrice(symbol)!;
+    estimatedBaseQty = ceilDecimalRatioToStep(minQuoteAmount, referencePrice, stepSize);
+    if (
+      isPositiveDecimal(symbol.min_qty) &&
+      compareDecimalStrings(estimatedBaseQty, symbol.min_qty) < 0
+    ) {
+      estimatedBaseQty = ceilDecimalRatioToStep(symbol.min_qty, "1", stepSize);
+    }
+  }
+
+  const preview: SellPreviewResult = {
+    balance_available: availableQty,
     symbol,
     requested_qty: requestedQty,
     executable_qty: executableQty,
-    can_execute: validateSellPreview({
-      symbol,
-      executable_qty: executableQty,
-      balance_available: balance.available,
-    }).ok,
-    final_round: Number(balance.available) > 0 && Number(balance.available) < Number(payload.step_amount),
+    execution_mode: shouldUseQuoteAmount ? "quote_order_qty" : "quantity",
+    quote_order_qty: shouldUseQuoteAmount ? minQuoteAmount : undefined,
+    estimated_base_qty: estimatedBaseQty,
+    estimated_notional: estimatedNotional,
+    adjusted_for_min_notional: shouldUseQuoteAmount,
+    can_execute: false,
+    final_round:
+      !shouldUseQuoteAmount &&
+      isPositiveDecimal(availableQty) &&
+      compareDecimalStrings(availableQty, configuredQty) < 0,
   };
+  const validation = validateSellPreview(preview);
+  const missingQuoteOrderMethod =
+    preview.execution_mode === "quote_order_qty" &&
+    !context.adapter.placeMarketSellOrderByQuoteAmount;
+  preview.can_execute = validation.ok && !missingQuoteOrderMethod;
+  preview.validation_message = missingQuoteOrderMethod
+    ? "Binance adapter does not support quoteOrderQty market sell"
+    : validation.message;
+  return preview;
 }
 
 export function createSellMarketTaskExecutor(
@@ -299,7 +385,7 @@ export function createSellMarketTaskExecutor(
     try {
       const preview = await previewSellQuantity(payload, context);
 
-      if (Number(preview.balance_available) <= 0) {
+      if (!isPositiveDecimal(preview.balance_available)) {
         return {
           job,
           log: { ok: true, message: "余额为 0，任务完成" },
@@ -307,27 +393,40 @@ export function createSellMarketTaskExecutor(
         };
       }
       const previewValidation = validateSellPreview(preview);
-      if (!previewValidation.ok) {
+      if (!preview.can_execute || !previewValidation.ok) {
         return {
           job,
           log: {
             ok: false,
-            message: `${previewValidation.message ?? "当前卖出条件不满足"} ｜ ${formatSellPreviewDebug(preview)}`,
+            message: `${preview.validation_message ?? previewValidation.message ?? "当前卖出条件不满足"} ｜ ${formatSellPreviewDebug(preview)}`,
           },
           stop: true,
         };
       }
 
-      const result = await context.adapter.placeMarketSellOrder!(
-        payload.symbol,
-        preview.executable_qty,
-        context.creds,
-      ) as MarketSellOrderResult;
+      let result: MarketSellOrderResult;
+      if (preview.execution_mode === "quote_order_qty") {
+        if (!context.adapter.placeMarketSellOrderByQuoteAmount || !preview.quote_order_qty) {
+          throw new Error("Binance adapter does not support quoteOrderQty market sell");
+        }
+        result = await context.adapter.placeMarketSellOrderByQuoteAmount(
+          payload.symbol,
+          preview.quote_order_qty,
+          context.creds,
+        );
+      } else {
+        result = await context.adapter.placeMarketSellOrder!(
+          payload.symbol,
+          preview.executable_qty,
+          context.creds,
+        );
+      }
 
       const doneCount = job.done_count + 1;
-      const soldTotal =
-        Number((job.progress as { sold_total?: string }).sold_total ?? "0") +
-        Number(result.executed_qty);
+      const soldTotal = addDecimalStrings(
+        (job.progress as { sold_total?: string }).sold_total ?? "0",
+        result.executed_qty,
+      );
 
       return {
         job: {
@@ -336,17 +435,22 @@ export function createSellMarketTaskExecutor(
           progress: {
             ...(job.progress ?? {}),
             done_count: doneCount,
-            sold_total: soldTotal.toString(),
+            sold_total: soldTotal,
             last_order_id: result.order_id,
             last_executed_qty: result.executed_qty,
             last_quote_qty: result.quote_qty,
             last_price: result.avg_price,
+            last_execution_mode: preview.execution_mode,
+            last_requested_quote_qty: preview.quote_order_qty,
+            last_adjusted_for_min_notional: preview.adjusted_for_min_notional,
             final_round: preview.final_round,
           },
         },
         log: {
           ok: true,
-          message: `第${doneCount}次卖出成功 - ${payload.symbol} ${result.executed_qty}`,
+          message: preview.adjusted_for_min_notional
+            ? `第${doneCount}次卖出成功 - 已按 Binance 最小成交额 ${preview.quote_order_qty} ${preview.symbol.quote_asset} 自适应，实际卖出 ${result.executed_qty} ${preview.symbol.base_asset}，成交额 ${result.quote_qty} ${preview.symbol.quote_asset}`
+            : `第${doneCount}次卖出成功 - ${payload.symbol} ${result.executed_qty}`,
         },
         complete: preview.final_round,
       };
@@ -571,7 +675,9 @@ export function createArbitrageTaskExecutor(
           const balanceAvail = Number(balance.available);
           const threshold = Number(payload.threshold_amount);
 
-          if (balanceAvail > threshold) {
+          // Trigger at the threshold (not only above it), but never submit a
+          // zero-balance withdrawal when the configured threshold is 0.
+          if (balanceAvail > 0 && balanceAvail >= threshold) {
             const withdrawReq: WithdrawRequest = {
               account_id: payload.account_id,
               asset: payload.asset,
@@ -605,7 +711,7 @@ export function createArbitrageTaskExecutor(
                   waiting_since: new Date().toISOString(),
                 },
               },
-              log: { ok: true, message: `余额 ${balance.available} > 阈值 ${threshold}，提现 ${balance.available} ${payload.asset} — ID: ${result.withdraw_id}` },
+              log: { ok: true, message: `余额 ${balance.available} >= 阈值 ${threshold}，提现 ${balance.available} ${payload.asset} — ID: ${result.withdraw_id}` },
               next_delay_sec: 5,
             };
           }

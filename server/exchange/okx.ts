@@ -7,13 +7,53 @@ import type {
   ExchangeAdapter,
   MarketSellOrderResult,
   SpotSymbolInfo,
+  SpotTrade,
   WithdrawRequest,
   WithdrawResponse,
 } from "./types.js";
 
 const BASE_URL = "https://www.okx.com";
 const REQUEST_TIMEOUT_MS = 15_000;
-const MAX_RETRIES = 2;
+const MAX_RETRIES = 5;
+const RETRY_BASE_DELAY_MS = 500;
+const RETRY_MAX_DELAY_MS = 10_000;
+
+// OKX rate limits are enforced per User ID. Per official docs, fills-history
+// allows 10 requests / 2s, most other endpoints 20 requests / 2s:
+// https://www.okx.com/docs-v5/en/#order-book-trading-trade-get-transaction-details-last-3-months
+// Use one conservative global token bucket so heavy pagination (1000+ trades)
+// never bursts over the per-User-ID limit and triggers HTTP 429.
+const OKX_RATE_LIMIT_CAPACITY = 10; // burst capacity = 10 requests
+const OKX_RATE_LIMIT_REFILL_PER_MS = 10 / 2000; // 10 tokens per 2s = 5 tokens/s
+
+class OkxTokenBucket {
+  private tokens = OKX_RATE_LIMIT_CAPACITY;
+  private lastRefill = Date.now();
+
+  /** Wait until a request token is available, then consume it. */
+  async acquire(): Promise<void> {
+    for (;;) {
+      const now = Date.now();
+      this.tokens = Math.min(
+        OKX_RATE_LIMIT_CAPACITY,
+        this.tokens + (now - this.lastRefill) * OKX_RATE_LIMIT_REFILL_PER_MS,
+      );
+      this.lastRefill = now;
+      if (this.tokens >= 1) {
+        this.tokens -= 1;
+        return;
+      }
+      await sleep(50);
+    }
+  }
+}
+
+const okxRateLimit = new OkxTokenBucket();
+
+function backoffDelayMs(attempt: number): number {
+  const base = Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS);
+  return base + Math.floor(Math.random() * 250);
+}
 const OKX_CLIENT_ID_MAX_LEN = 32;
 const OKX_ACCOUNT_FUNDING = "6";
 const OKX_ACCOUNT_TRADING = "18";
@@ -64,6 +104,7 @@ async function okxRequest(
   const bodyStr = body ? JSON.stringify(body) : "";
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    await okxRateLimit.acquire();
     const timestamp = new Date().toISOString();
     const signPayload = `${timestamp}${method}${path}${bodyStr}`;
     const signature = b64HmacSha256(signPayload, creds.api_secret);
@@ -91,7 +132,13 @@ async function okxRequest(
       if (!resp.ok) {
         const msg = (data as { msg?: string }).msg ?? resp.statusText;
         if (attempt < MAX_RETRIES && shouldRetryStatus(resp.status)) {
-          await sleep(300 * (attempt + 1));
+          // Prefer the server-provided Retry-After (seconds) when present.
+          const retryAfter = Number(resp.headers.get("retry-after"));
+          const delayMs =
+            Number.isFinite(retryAfter) && retryAfter > 0
+              ? retryAfter * 1000
+              : backoffDelayMs(attempt);
+          await sleep(delayMs);
           continue;
         }
         throw new Error(`OKX API error ${resp.status}: ${msg}`);
@@ -106,7 +153,7 @@ async function okxRequest(
     } catch (e: unknown) {
       const isAbort = e instanceof Error && e.name === "AbortError";
       if (attempt < MAX_RETRIES && (isAbort || e instanceof TypeError)) {
-        await sleep(300 * (attempt + 1));
+        await sleep(backoffDelayMs(attempt));
         continue;
       }
       throw e;
@@ -524,5 +571,80 @@ export class OkxAdapter implements ExchangeAdapter {
         detail: detailRaw,
       },
     };
+  }
+
+  // Official: GET /api/v5/trade/fills-history (last 3 months, max 100/page,
+  // rate limit 10 requests / 2s per User ID).
+  // https://www.okx.com/docs-v5/en/#order-book-trading-trade-get-transaction-details-last-3-months
+  async getSpotTrades(
+    symbol: string,
+    startTime: number,
+    endTime: number,
+    creds: DecryptedCreds,
+  ): Promise<SpotTrade[]> {
+    type OkxFill = {
+      instId?: string; tradeId?: string; ordId?: string; billId?: string; side?: string;
+      fillPx?: string; fillSz?: string; fee?: string; feeCcy?: string; fillTime?: string;
+      ts?: string; execType?: string;
+    };
+
+    const WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7-day sub-windows (well under the 90-day cap)
+    const CONCURRENCY = 4;
+
+    const fetchWindow = async (begin: number, windowEnd: number): Promise<OkxFill[]> => {
+      const rows: OkxFill[] = [];
+      let after = "";
+      for (let page = 0; page < 1000; page += 1) {
+        const query = new URLSearchParams({
+          instType: "SPOT", instId: symbol.toUpperCase(), begin: String(begin),
+          end: String(windowEnd), limit: "100", ...(after ? { after } : {}),
+        }).toString();
+        const raw = await okxRequest("GET", "/api/v5/trade/fills-history", creds, undefined, query) as { data?: OkxFill[] };
+        const batch = raw.data ?? [];
+        rows.push(...batch);
+        if (batch.length < 100) break;
+        const next = batch[batch.length - 1]?.billId ?? "";
+        if (!next || next === after) break;
+        after = next;
+        if (page === 999) throw new Error("OKX trade history exceeds pagination limit");
+      }
+      return rows;
+    };
+
+    // Split the range into 7-day windows fetched concurrently. Each window pages
+    // sequentially via `after`, so thousands of trades are pulled in parallel while
+    // the shared token bucket keeps us under the per-User-ID rate limit.
+    const windows: Array<[number, number]> = [];
+    for (let t = startTime; t <= endTime; t += WINDOW_MS) {
+      windows.push([t, Math.min(t + WINDOW_MS - 1, endTime)]);
+    }
+    const buckets: OkxFill[][] = new Array(windows.length);
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, windows.length) }, async () => {
+      for (;;) {
+        const i = cursor;
+        cursor += 1;
+        if (i >= windows.length) return;
+        buckets[i] = await fetchWindow(windows[i][0], windows[i][1]);
+      }
+    }));
+
+    // Merge and dedupe by billId (unique per fill) across windows.
+    const result = new Map<string, OkxFill>();
+    for (const rows of buckets) {
+      for (const row of rows) result.set(row.billId ?? row.tradeId ?? `${row.ts}-${result.size}`, row);
+    }
+    return [...result.values()].map((row) => {
+      const price = row.fillPx ?? "0";
+      const quantity = row.fillSz ?? "0";
+      return {
+        symbol: row.instId ?? symbol.toUpperCase(), trade_id: row.tradeId ?? row.billId ?? "",
+        order_id: row.ordId ?? "", price, quantity,
+        quote_quantity: (Number(price) * Number(quantity)).toString(),
+        commission: String(Math.abs(Number(row.fee ?? "0"))), commission_asset: row.feeCcy ?? "",
+        time: Number(row.fillTime ?? row.ts ?? 0), is_buyer: row.side === "buy",
+        is_maker: row.execType === "M",
+      };
+    }).filter((row) => row.time >= startTime && row.time <= endTime).sort((a, b) => a.time - b.time);
   }
 }

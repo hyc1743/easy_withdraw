@@ -1,6 +1,6 @@
 import type { Request } from "express";
 import type { SessionManager } from "../security.js";
-import { loadLatestRunningTask, stopInterruptedRunningTasks } from "./store.js";
+import { listTaskJobs, stopInterruptedRunningTasks } from "./store.js";
 import type { TaskJob } from "./types.js";
 import { createTaskExecutor } from "./executors.js";
 import { taskRuntime } from "./runtime.js";
@@ -11,13 +11,15 @@ export function hydrateTask(job: TaskJob, session: SessionManager, req: Request)
   return taskRuntime.registerTask(job, executor);
 }
 
-export function ensureRuntimeHydrated(session: SessionManager, req: Request): void {
-  if (taskRuntime.getActiveTask()) {
-    return;
-  }
+let hydrated = false;
 
+export function ensureRuntimeHydrated(session: SessionManager, req: Request): void {
+  if (hydrated) return;
   stopInterruptedRunningTasks();
-  const persisted = loadLatestRunningTask();
-  if (!persisted) return;
-  hydrateTask(persisted, session, req);
+  for (const persisted of listTaskJobs()) {
+    if (persisted.state === "running" && !taskRuntime.getTask(persisted.id)) {
+      hydrateTask(persisted, session, req);
+    }
+  }
+  hydrated = true;
 }

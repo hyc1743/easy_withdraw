@@ -1,4 +1,9 @@
 import crypto from "node:crypto";
+import {
+  combineDecimalSteps,
+  compareDecimalStrings,
+  normalizeDecimalString,
+} from "../decimal.js";
 import type {
   AssetBalance,
   ChainInfo,
@@ -6,6 +11,7 @@ import type {
   DecryptedCreds,
   ExchangeAdapter,
   MarketSellOrderResult,
+  SpotTrade,
   SpotSymbolInfo,
   WithdrawRequest,
   WithdrawResponse,
@@ -15,6 +21,19 @@ const BASE_URL = "https://api.binance.com";
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RETRIES = 2;
 const RECV_WINDOW = "5000";
+const BINANCE_TRADE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const BINANCE_TRADE_PAGE_SIZE = 1000;
+
+class BinanceApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: number | undefined,
+    message: string,
+  ) {
+    super(`Binance API error ${status}: ${message}`);
+    this.name = "BinanceApiError";
+  }
+}
 
 function shouldRetryStatus(status: number): boolean {
   return status === 429 || status >= 500;
@@ -72,12 +91,13 @@ async function binanceSignedRequest(
       const data = text ? (JSON.parse(text) as unknown) : {};
 
       if (!resp.ok) {
-        const msg = (data as { msg?: string }).msg ?? resp.statusText;
+        const errorData = data as { code?: number; msg?: string };
+        const msg = errorData.msg ?? resp.statusText;
         if (attempt < MAX_RETRIES && shouldRetryStatus(resp.status)) {
           await sleep(300 * (attempt + 1));
           continue;
         }
-        throw new Error(`Binance API error ${resp.status}: ${msg}`);
+        throw new BinanceApiError(resp.status, errorData.code, msg);
       }
 
       return data;
@@ -113,8 +133,9 @@ async function binancePublicRequest(
     const text = await resp.text();
     const data = text ? (JSON.parse(text) as unknown) : {};
     if (!resp.ok) {
-      const msg = (data as { msg?: string }).msg ?? resp.statusText;
-      throw new Error(`Binance API error ${resp.status}: ${msg}`);
+      const errorData = data as { code?: number; msg?: string };
+      const msg = errorData.msg ?? resp.statusText;
+      throw new BinanceApiError(resp.status, errorData.code, msg);
     }
     return data;
   } finally {
@@ -122,28 +143,167 @@ async function binancePublicRequest(
   }
 }
 
-function normalizeSpotSymbolInfo(raw: {
+interface BinanceSymbolFilter {
+  filterType?: string;
+  minQty?: string;
+  maxQty?: string;
+  stepSize?: string;
+  minNotional?: string;
+  applyToMarket?: boolean;
+  applyMinToMarket?: boolean;
+  avgPriceMins?: number;
+}
+
+interface BinanceSymbolRaw {
   symbol?: string;
   status?: string;
   baseAsset?: string;
+  baseAssetPrecision?: number;
   quoteAsset?: string;
-  filters?: Array<{
-    filterType?: string;
-    minQty?: string;
-    stepSize?: string;
-  }>;
-}): SpotSymbolInfo {
-  const lotSize =
-    raw.filters?.find((filter) => filter.filterType === "MARKET_LOT_SIZE") ??
-    raw.filters?.find((filter) => filter.filterType === "LOT_SIZE");
+  quoteOrderQtyMarketAllowed?: boolean;
+  filters?: BinanceSymbolFilter[];
+}
+
+interface NormalizedBinanceSpotSymbol extends SpotSymbolInfo {
+  market_avg_price_mins: number;
+}
+
+function positiveDecimal(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const normalized = normalizeDecimalString(value);
+    return compareDecimalStrings(normalized, "0") > 0 ? normalized : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function maximumPositive(values: Array<string | undefined>): string | undefined {
+  return values
+    .map(positiveDecimal)
+    .filter((value): value is string => Boolean(value))
+    .reduce<string | undefined>((current, value) => (
+      current === undefined || compareDecimalStrings(value, current) > 0 ? value : current
+    ), undefined);
+}
+
+function minimumPositive(values: Array<string | undefined>): string | undefined {
+  return values
+    .map(positiveDecimal)
+    .filter((value): value is string => Boolean(value))
+    .reduce<string | undefined>((current, value) => (
+      current === undefined || compareDecimalStrings(value, current) < 0 ? value : current
+    ), undefined);
+}
+
+function precisionToStep(precision: number | undefined): string {
+  if (!Number.isInteger(precision) || precision === undefined || precision <= 0) return "1";
+  return `0.${"0".repeat(precision - 1)}1`;
+}
+
+function normalizeAvgPriceMins(value: number | undefined): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+}
+
+function normalizeSpotSymbolInfo(raw: BinanceSymbolRaw): NormalizedBinanceSpotSymbol {
+  const lotSize = raw.filters?.find((filter) => filter.filterType === "LOT_SIZE");
+  const marketLotSize = raw.filters?.find((filter) => filter.filterType === "MARKET_LOT_SIZE");
+  const quantityFilters = [lotSize, marketLotSize].filter(
+    (filter): filter is BinanceSymbolFilter => Boolean(filter),
+  );
+  const stepSize = combineDecimalSteps(
+    quantityFilters.map((filter) => filter.stepSize ?? "0"),
+  ) ?? precisionToStep(raw.baseAssetPrecision);
+
+  const marketNotionalFilters = (raw.filters ?? []).filter((filter) => (
+    (filter.filterType === "MIN_NOTIONAL" && filter.applyToMarket === true) ||
+    (filter.filterType === "NOTIONAL" && filter.applyMinToMarket === true)
+  ));
+  const effectiveNotional = marketNotionalFilters.reduce<BinanceSymbolFilter | undefined>(
+    (current, filter) => {
+      const currentMin = positiveDecimal(current?.minNotional);
+      const candidateMin = positiveDecimal(filter.minNotional);
+      if (!candidateMin) return current;
+      if (!currentMin || compareDecimalStrings(candidateMin, currentMin) > 0) return filter;
+      return current;
+    },
+    undefined,
+  );
 
   return {
     symbol: raw.symbol ?? "",
     status: raw.status ?? "UNKNOWN",
     base_asset: raw.baseAsset ?? "",
     quote_asset: raw.quoteAsset ?? "",
-    min_qty: lotSize?.minQty ?? "0",
-    step_size: lotSize?.stepSize ?? "0.00000001",
+    min_qty: maximumPositive(quantityFilters.map((filter) => filter.minQty)) ?? "0",
+    max_qty: minimumPositive(quantityFilters.map((filter) => filter.maxQty)),
+    step_size: stepSize,
+    min_quote_amount: positiveDecimal(effectiveNotional?.minNotional),
+    quote_order_qty_market_allowed: raw.quoteOrderQtyMarketAllowed === true,
+    market_avg_price_mins: normalizeAvgPriceMins(effectiveNotional?.avgPriceMins),
+  };
+}
+
+async function getMarketReferencePrice(
+  symbol: string,
+  avgPriceMins: number,
+  hasMarketNotionalFilter: boolean,
+): Promise<{
+  price: string;
+  source: "reference_price" | "average_price" | "last_price";
+}> {
+  if (hasMarketNotionalFilter) {
+    try {
+      const raw = await binancePublicRequest("/api/v3/referencePrice", { symbol });
+      const referencePrice = positiveDecimal(
+        (raw as { referencePrice?: string | null }).referencePrice ?? undefined,
+      );
+      if (referencePrice) return { price: referencePrice, source: "reference_price" };
+    } catch (error: unknown) {
+      if (!(error instanceof BinanceApiError) || error.code !== -2043) throw error;
+    }
+  }
+
+  if (avgPriceMins > 0) {
+    const raw = await binancePublicRequest("/api/v3/avgPrice", { symbol });
+    const price = positiveDecimal((raw as { price?: string }).price);
+    if (!price) throw new Error(`Binance returned an invalid average price for ${symbol}`);
+    return { price, source: "average_price" };
+  }
+
+  const raw = await binancePublicRequest("/api/v3/ticker/price", { symbol });
+  const price = positiveDecimal((raw as { price?: string }).price);
+  if (!price) throw new Error(`Binance returned an invalid last price for ${symbol}`);
+  return { price, source: "last_price" };
+}
+
+function normalizeMarketSellResult(
+  raw: unknown,
+  fallbackSymbol: string,
+): MarketSellOrderResult {
+  const order = raw as {
+    orderId?: number;
+    symbol?: string;
+    status?: string;
+    executedQty?: string;
+    cummulativeQuoteQty?: string;
+  };
+  const executedQty = order.executedQty ?? "0";
+  const quoteQty = order.cummulativeQuoteQty ?? "0";
+  const avgPrice =
+    Number(executedQty) > 0
+      ? (Number(quoteQty) / Number(executedQty)).toString()
+      : "0";
+
+  return {
+    order_id: String(order.orderId ?? ""),
+    symbol: order.symbol ?? fallbackSymbol,
+    status: order.status ?? "UNKNOWN",
+    executed_qty: executedQty,
+    quote_qty: quoteQty,
+    avg_price: avgPrice,
+    raw,
   };
 }
 
@@ -273,17 +433,7 @@ export class BinanceAdapter implements ExchangeAdapter {
 
   async listSpotSymbols(_creds: DecryptedCreds): Promise<SpotSymbolInfo[]> {
     const raw = await binancePublicRequest("/api/v3/exchangeInfo");
-    const symbols = (raw as { symbols?: Array<{
-      symbol?: string;
-      status?: string;
-      baseAsset?: string;
-      quoteAsset?: string;
-      filters?: Array<{
-        filterType?: string;
-        minQty?: string;
-        stepSize?: string;
-      }>;
-    }> }).symbols ?? [];
+    const symbols = (raw as { symbols?: BinanceSymbolRaw[] }).symbols ?? [];
 
     return symbols
       .filter((symbol) => symbol.symbol && symbol.baseAsset && symbol.quoteAsset)
@@ -297,19 +447,22 @@ export class BinanceAdapter implements ExchangeAdapter {
     const raw = await binancePublicRequest("/api/v3/exchangeInfo", {
       symbol: symbol.toUpperCase(),
     });
-    const symbols = (raw as { symbols?: Array<{
-      symbol?: string;
-      status?: string;
-      baseAsset?: string;
-      quoteAsset?: string;
-      filters?: Array<{
-        filterType?: string;
-        minQty?: string;
-        stepSize?: string;
-      }>;
-    }> }).symbols ?? [];
+    const symbols = (raw as { symbols?: BinanceSymbolRaw[] }).symbols ?? [];
     const first = symbols[0];
-    return first ? normalizeSpotSymbolInfo(first) : null;
+    if (!first) return null;
+
+    const normalized = normalizeSpotSymbolInfo(first);
+    const referencePrice = await getMarketReferencePrice(
+      normalized.symbol,
+      normalized.market_avg_price_mins,
+      Boolean(normalized.min_quote_amount),
+    );
+    return {
+      ...normalized,
+      last_price: referencePrice.price,
+      market_reference_price: referencePrice.price,
+      market_reference_price_source: referencePrice.source,
+    };
   }
 
   async placeMarketSellOrder(
@@ -322,30 +475,119 @@ export class BinanceAdapter implements ExchangeAdapter {
       side: "SELL",
       type: "MARKET",
       quantity,
+      newOrderRespType: "FULL",
     });
+    return normalizeMarketSellResult(raw, symbol.toUpperCase());
+  }
 
-    const order = raw as {
-      orderId?: number;
+  /**
+   * Official Binance MARKET orders accept quoteOrderQty instead of quantity.
+   * For SELL orders it is the quote amount the user wants to receive, and
+   * Binance derives a base quantity that does not break LOT_SIZE rules.
+   * https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints#new-order-trade
+   */
+  async placeMarketSellOrderByQuoteAmount(
+    symbol: string,
+    quoteAmount: string,
+    creds: DecryptedCreds,
+  ): Promise<MarketSellOrderResult> {
+    const raw = await binanceSignedRequest("POST", "/api/v3/order", creds, {
+      symbol: symbol.toUpperCase(),
+      side: "SELL",
+      type: "MARKET",
+      quoteOrderQty: normalizeDecimalString(quoteAmount),
+      newOrderRespType: "FULL",
+    });
+    return normalizeMarketSellResult(raw, symbol.toUpperCase());
+  }
+
+  /**
+   * Binance Account Trade List requires a symbol and limits startTime/endTime
+   * to a 24-hour span. Longer user-selected ranges are therefore split into
+   * adjacent windows and full pages continue from the last trade id.
+   * Official reference:
+   * https://developers.binance.com/docs/binance-spot-api-docs/rest-api/account-endpoints#account-trade-list-user_data
+   */
+  async getSpotTrades(
+    symbol: string,
+    startTime: number,
+    endTime: number,
+    creds: DecryptedCreds,
+  ): Promise<SpotTrade[]> {
+    const normalizedSymbol = symbol.trim().toUpperCase();
+    if (!normalizedSymbol) throw new Error("symbol is required");
+    if (!Number.isSafeInteger(startTime) || !Number.isSafeInteger(endTime) || startTime > endTime) {
+      throw new Error("Invalid trade history time range");
+    }
+
+    type BinanceTrade = {
       symbol?: string;
-      status?: string;
-      executedQty?: string;
-      cummulativeQuoteQty?: string;
+      id?: number;
+      orderId?: number;
+      price?: string;
+      qty?: string;
+      quoteQty?: string;
+      commission?: string;
+      commissionAsset?: string;
+      time?: number;
+      isBuyer?: boolean;
+      isMaker?: boolean;
     };
-    const executedQty = order.executedQty ?? "0";
-    const quoteQty = order.cummulativeQuoteQty ?? "0";
-    const avgPrice =
-      Number(executedQty) > 0
-        ? (Number(quoteQty) / Number(executedQty)).toString()
-        : "0";
 
-    return {
-      order_id: String(order.orderId ?? ""),
-      symbol: order.symbol ?? symbol.toUpperCase(),
-      status: order.status ?? "UNKNOWN",
-      executed_qty: executedQty,
-      quote_qty: quoteQty,
-      avg_price: avgPrice,
-      raw,
-    };
+    const collected = new Map<string, BinanceTrade>();
+    let windowStart = startTime;
+    while (windowStart <= endTime) {
+      const windowEnd = Math.min(endTime, windowStart + BINANCE_TRADE_WINDOW_MS - 1);
+      const raw = await binanceSignedRequest("GET", "/api/v3/myTrades", creds, {
+        symbol: normalizedSymbol,
+        startTime: String(windowStart),
+        endTime: String(windowEnd),
+        limit: String(BINANCE_TRADE_PAGE_SIZE),
+      });
+      let page = raw as BinanceTrade[];
+      for (const trade of page) {
+        if (trade.id !== undefined) collected.set(String(trade.id), trade);
+      }
+
+      // startTime/endTime cannot be combined with fromId. Continue from the
+      // last id and retain only records that still belong to this window.
+      let pages = 1;
+      while (page.length === BINANCE_TRADE_PAGE_SIZE) {
+        const last = page[page.length - 1];
+        if (last.id === undefined || (last.time ?? 0) > windowEnd) break;
+        if (pages >= 100) throw new Error("Too many Binance trades in a 24-hour window");
+        const nextRaw = await binanceSignedRequest("GET", "/api/v3/myTrades", creds, {
+          symbol: normalizedSymbol,
+          fromId: String(last.id + 1),
+          limit: String(BINANCE_TRADE_PAGE_SIZE),
+        });
+        page = nextRaw as BinanceTrade[];
+        for (const trade of page) {
+          const time = trade.time ?? 0;
+          if (trade.id !== undefined && time >= windowStart && time <= windowEnd) {
+            collected.set(String(trade.id), trade);
+          }
+        }
+        pages += 1;
+      }
+      windowStart = windowEnd + 1;
+    }
+
+    return [...collected.values()]
+      .filter((trade) => (trade.time ?? 0) >= startTime && (trade.time ?? 0) <= endTime)
+      .sort((a, b) => (a.time ?? 0) - (b.time ?? 0))
+      .map((trade) => ({
+        symbol: trade.symbol ?? normalizedSymbol,
+        trade_id: String(trade.id ?? ""),
+        order_id: String(trade.orderId ?? ""),
+        price: trade.price ?? "0",
+        quantity: trade.qty ?? "0",
+        quote_quantity: trade.quoteQty ?? "0",
+        commission: trade.commission ?? "0",
+        commission_asset: trade.commissionAsset ?? "",
+        time: trade.time ?? 0,
+        is_buyer: trade.isBuyer ?? false,
+        is_maker: trade.isMaker ?? false,
+      }));
   }
 }

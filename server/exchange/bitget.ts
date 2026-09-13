@@ -7,6 +7,7 @@ import type {
   ExchangeAdapter,
   MarketSellOrderResult,
   SpotSymbolInfo,
+  SpotTrade,
   WithdrawRequest,
   WithdrawResponse,
 } from "./types.js";
@@ -400,5 +401,65 @@ export class BitgetAdapter implements ExchangeAdapter {
         detail: detailRaw,
       },
     };
+  }
+
+  // Official: GET /api/v2/spot/trade/fills, max 100/page, cursor is idLessThan.
+  // https://www.bitget.com/api-doc/spot/trade/Get-Fills
+  async getSpotTrades(
+    symbol: string,
+    startTime: number,
+    endTime: number,
+    creds: DecryptedCreds,
+  ): Promise<SpotTrade[]> {
+    type FeeDetail = { feeCoin?: string; fee?: string; totalFee?: string; totalDeductionFee?: string };
+    type BitgetFill = {
+      symbol?: string; orderId?: string; tradeId?: string; side?: string; priceAvg?: string;
+      size?: string; amount?: string; feeDetail?: FeeDetail[] | string; cTime?: string;
+    };
+    const result = new Map<string, BitgetFill>();
+    const windowMs = 30 * 24 * 60 * 60 * 1000;
+    for (let from = startTime; from <= endTime;) {
+      const to = Math.min(endTime, from + windowMs - 1);
+      let idLessThan = "";
+      for (let page = 0; page < 1000; page += 1) {
+        const query = new URLSearchParams({
+          symbol: symbol.toUpperCase(), startTime: String(from), endTime: String(to), limit: "100",
+          ...(idLessThan ? { idLessThan } : {}),
+        }).toString();
+        const raw = await bitgetRequest("GET", "/api/v2/spot/trade/fills", creds, undefined, query) as {
+          data?: BitgetFill[];
+        };
+        const rows = raw.data ?? [];
+        for (const row of rows) if (row.tradeId) result.set(row.tradeId, row);
+        const next = rows[rows.length - 1]?.tradeId ?? "";
+        if (rows.length < 100 || !next || next === idLessThan) break;
+        idLessThan = next;
+        if (page === 999) throw new Error("Bitget trade history exceeds pagination limit");
+      }
+      from = to + 1;
+    }
+    return [...result.values()].map((row) => {
+      let details: FeeDetail[] = [];
+      try {
+        const parsed = Array.isArray(row.feeDetail) ? row.feeDetail : JSON.parse(row.feeDetail || "[]") as FeeDetail[] | FeeDetail;
+        details = Array.isArray(parsed) ? parsed : [parsed];
+      } catch { details = []; }
+      const fee = details[0];
+      const commissions = details.flatMap((detail) => {
+        const values = [detail.fee ?? detail.totalFee, detail.totalDeductionFee]
+          .filter((value): value is string => value !== undefined && Math.abs(Number(value)) > 0);
+        return values.map((value) => ({ asset: detail.feeCoin ?? "", amount: String(Math.abs(Number(value))) }));
+      }).filter((item) => item.asset);
+      const commission = commissions.reduce((sum, item) => sum + Number(item.amount), 0);
+      const price = row.priceAvg ?? "0";
+      const quantity = row.size ?? "0";
+      return {
+        symbol: row.symbol ?? symbol.toUpperCase(), trade_id: row.tradeId ?? "", order_id: row.orderId ?? "",
+        price, quantity, quote_quantity: row.amount ?? (Number(price) * Number(quantity)).toString(),
+        commission: commission.toString(), commission_asset: fee?.feeCoin ?? "",
+        commissions,
+        time: Number(row.cTime ?? 0), is_buyer: row.side === "buy", is_maker: false,
+      };
+    }).filter((row) => row.time >= startTime && row.time <= endTime).sort((a, b) => a.time - b.time);
   }
 }

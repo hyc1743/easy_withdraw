@@ -9,6 +9,7 @@ import type {
   AssetBalance,
   MarketSellOrderResult,
   SpotSymbolInfo,
+  SpotTrade,
 } from "./types.js";
 
 const BASE_URL = "https://api.gateio.ws";
@@ -400,6 +401,55 @@ export class GateAdapter implements ExchangeAdapter {
       avg_price: avgPrice,
       raw,
     };
+  }
+
+  // Official: GET /api/v4/spot/my_trades, max 30-day range, limit 1000.
+  // https://www.gate.com/docs/developers/apiv4/en/#list-personal-trading-history
+  async getSpotTrades(
+    symbol: string,
+    startTime: number,
+    endTime: number,
+    creds: DecryptedCreds,
+  ): Promise<SpotTrade[]> {
+    type GateTrade = {
+      id?: string; order_id?: string; create_time?: string; create_time_ms?: string;
+      currency_pair?: string; side?: string; role?: string; amount?: string; price?: string;
+      fee?: string; fee_currency?: string; point_fee?: string; gt_fee?: string;
+    };
+    const result = new Map<string, GateTrade>();
+    const windowMs = 30 * 24 * 60 * 60 * 1000;
+    for (let fromMs = startTime; fromMs <= endTime;) {
+      const toMs = Math.min(endTime, fromMs + windowMs - 1);
+      for (let page = 1; page <= 100; page += 1) {
+        const query = new URLSearchParams({
+          currency_pair: symbol.toUpperCase(), limit: "1000", page: String(page),
+          from: String(Math.floor(fromMs / 1000)), to: String(Math.ceil(toMs / 1000)),
+        }).toString();
+        const rows = await gateRequest("GET", "/spot/my_trades", creds, undefined, query) as GateTrade[];
+        for (const row of rows) if (row.id) result.set(row.id, row);
+        if (rows.length < 1000) break;
+        if (page === 100) throw new Error("Gate trade history exceeds pagination limit");
+      }
+      fromMs = toMs + 1;
+    }
+    return [...result.values()].map((row) => {
+      const quantity = row.amount ?? "0";
+      const price = row.price ?? "0";
+      const commissions = [
+        { asset: row.fee_currency ?? "", amount: row.fee ?? "0" },
+        { asset: "POINT", amount: row.point_fee ?? "0" },
+        { asset: "GT", amount: row.gt_fee ?? "0" },
+      ].filter((fee) => fee.asset && Math.abs(Number(fee.amount)) > 0);
+      return {
+        symbol: row.currency_pair ?? symbol.toUpperCase(), trade_id: row.id ?? "",
+        order_id: row.order_id ?? "", price, quantity,
+        quote_quantity: (Number(price) * Number(quantity)).toString(),
+        commission: row.fee ?? "0", commission_asset: row.fee_currency ?? "",
+        commissions,
+        time: Number(row.create_time_ms ?? 0) || Number(row.create_time ?? 0) * 1000,
+        is_buyer: row.side === "buy", is_maker: row.role === "maker",
+      };
+    }).filter((row) => row.time >= startTime && row.time <= endTime).sort((a, b) => a.time - b.time);
   }
 }
 

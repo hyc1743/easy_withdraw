@@ -179,6 +179,9 @@ export interface SellMarketTaskProgress {
   last_executed_qty?: string;
   last_quote_qty?: string;
   last_price?: string;
+  last_execution_mode?: "quantity" | "quote_order_qty";
+  last_requested_quote_qty?: string;
+  last_adjusted_for_min_notional?: boolean;
   final_round?: boolean;
 }
 

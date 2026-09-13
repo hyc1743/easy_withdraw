@@ -7,6 +7,7 @@ import type {
   ExchangeAdapter,
   MarketSellOrderResult,
   SpotSymbolInfo,
+  SpotTrade,
   WithdrawRequest,
   WithdrawResponse,
 } from "./types.js";
@@ -440,5 +441,49 @@ export class BybitAdapter implements ExchangeAdapter {
         detail: detailRaw,
       },
     };
+  }
+
+  // Official: GET /v5/execution/list, start/end span must be <= 7 days.
+  // https://bybit-exchange.github.io/docs/v5/order/execution
+  async getSpotTrades(
+    symbol: string,
+    startTime: number,
+    endTime: number,
+    creds: DecryptedCreds,
+  ): Promise<SpotTrade[]> {
+    type BybitExecution = {
+      symbol?: string; orderId?: string; side?: string; execFee?: string; execId?: string;
+      execPrice?: string; execQty?: string; execValue?: string; execTime?: string;
+      feeCurrency?: string; isMaker?: boolean;
+    };
+    const result = new Map<string, BybitExecution>();
+    const windowMs = 7 * 24 * 60 * 60 * 1000;
+    for (let from = startTime; from <= endTime;) {
+      const to = Math.min(endTime, from + windowMs);
+      let cursor = "";
+      for (let page = 0; page < 1000; page += 1) {
+        const query = new URLSearchParams({
+          category: "spot", symbol: symbol.toUpperCase(), startTime: String(from),
+          endTime: String(to), limit: "100", ...(cursor ? { cursor } : {}),
+        }).toString();
+        const raw = await bybitRequest("GET", "/v5/execution/list", creds, undefined, query) as {
+          result?: { list?: BybitExecution[]; nextPageCursor?: string };
+        };
+        const rows = raw.result?.list ?? [];
+        for (const row of rows) if (row.execId) result.set(row.execId, row);
+        const next = raw.result?.nextPageCursor ?? "";
+        if (!next || next === cursor || rows.length === 0) break;
+        cursor = next;
+        if (page === 999) throw new Error("Bybit trade history exceeds pagination limit");
+      }
+      from = to + 1;
+    }
+    return [...result.values()].map((row) => ({
+      symbol: row.symbol ?? symbol.toUpperCase(), trade_id: row.execId ?? "", order_id: row.orderId ?? "",
+      price: row.execPrice ?? "0", quantity: row.execQty ?? "0",
+      quote_quantity: row.execValue ?? (Number(row.execPrice ?? 0) * Number(row.execQty ?? 0)).toString(),
+      commission: row.execFee ?? "0", commission_asset: row.feeCurrency ?? "",
+      time: Number(row.execTime ?? 0), is_buyer: row.side === "Buy", is_maker: row.isMaker ?? false,
+    })).filter((row) => row.time >= startTime && row.time <= endTime).sort((a, b) => a.time - b.time);
   }
 }
