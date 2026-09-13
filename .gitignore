@@ -28,3 +28,9 @@ tests/*
 
 # Multi-task arbitrage regression coverage.
 !tests/tasks-multiple-arbitrage.test.ts
+
+!tests/public-task-delete.test.ts
+
+!tests/startup-defaults.test.ts
+
+!tests/task-parties-ui.test.ts

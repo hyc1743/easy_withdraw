@@ -9,7 +9,7 @@ import { accountRoutes } from "./routes/accounts.js";
 import { withdrawRoutes } from "./routes/withdraw.js";
 import { currencyRoutes } from "./routes/currencies.js";
 import { addressRoutes } from "./routes/addresses.js";
-import { templateRoutes } from "./routes/templates.js";
+import { resolveListenHost } from "./host.js";
 import { tradeRoutes } from "./routes/trade.js";
 import { taskRoutes } from "./routes/tasks.js";
 import { onchainRoutes } from "./routes/onchain.js";
@@ -20,9 +20,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const config = ensureConfig();
 const { port, session_timeout_min } = config.settings;
-const host =
-  process.env.EW_HOST ??
-  (config.settings.host === "0.0.0.0" ? "127.0.0.1" : config.settings.host);
+const host = resolveListenHost();
 
 const session = new SessionManager(session_timeout_min);
 const app = express();
@@ -49,7 +47,6 @@ app.use("/api/auth", authRoutes(session));
 app.use("/api/accounts", requireSession(session), accountRoutes(session));
 app.use("/api/currencies", requireSession(session), currencyRoutes(session));
 app.use("/api/addresses", requireSession(session), addressRoutes());
-app.use("/api/templates", requireSession(session), templateRoutes());
 app.use("/api/withdraw", requireSession(session), withdrawRoutes(session));
 app.use("/api/trade", requireSession(session), tradeRoutes(session));
 app.use("/api/onchain", requireSession(session), onchainRoutes(session));

@@ -23,7 +23,7 @@ function normalizeDexToCexPayload(body: Partial<DexToCexArbitrageTaskPayload>): 
     token_address: String(body.token_address ?? "").trim(),
     dst_token_address: String(body.dst_token_address ?? "").trim() || undefined,
     threshold_amount: String(body.threshold_amount ?? "").trim(),
-    interval_sec: Number(body.interval_sec ?? 60) || 60,
+    interval_sec: Number(body.interval_sec ?? 5) || 5,
     deposit_address: String(body.deposit_address ?? "").trim(),
     slippage_bps: body.slippage_bps !== undefined ? Number(body.slippage_bps) : undefined,
     mode: body.mode === "direct" ? "direct" : body.mode === "api" ? "api" : undefined,

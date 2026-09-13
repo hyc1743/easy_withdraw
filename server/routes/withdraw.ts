@@ -79,7 +79,7 @@ export function normalizeArbitrageStartBody(body: StartArbitrageBody): Normalize
 
   const thresholdAmount = parseThresholdAmount(body.threshold_amount);
   const intervalSec = body.interval_sec === undefined
-    ? 60
+    ? 5
     : Number(body.interval_sec);
   if (!Number.isInteger(intervalSec) || intervalSec <= 0) {
     throw new Error("interval_sec must be a positive integer");

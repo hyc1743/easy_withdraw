@@ -4,7 +4,7 @@
 
 ## 特性
 
-- 默认监听 `127.0.0.1`（localhost）
+- 默认监听本机 Tailscale IPv4，未检测到时回退 localhost
 - 主密码加密存储交易所密钥（Argon2id + AES-256-GCM）
 - 基于 SQLite 持久化配置、提现历史、定时任务与日志
 - 支持 Binance / OKX / Bybit / Gate / Bitget / MEXC 现货按秒间隔自动市价卖出，直到余额卖完
@@ -25,16 +25,15 @@ npm install
 # 开发模式（热重载）
 npm run dev
 
-# 启动（交互选择监听方式：localhost / tailscale ip）
+# 启动（自动优先监听 Tailscale IPv4）
 npm start
 ```
 
-启动后访问 `http://127.0.0.1:4217`。
+启动后访问终端输出的地址。
 
-- `npm start` 会提示选择监听方式：
-  - `1` localhost（`127.0.0.1`）
-  - `2` tailscale ip（自动检测本机 Tailscale IPv4）
-- 也可通过 `EW_HOST` 直接指定监听地址（会跳过交互）
+- `npm start`、`npm run dev` 和 `npm run serve` 均默认自动检测并监听本机 Tailscale IPv4，无需交互选择。
+- 未检测到 Tailscale IPv4 时回退到 `127.0.0.1`，不会自动监听所有网卡。
+- 通过 `EW_HOST` 显式指定地址可覆盖自动选择，例如 `EW_HOST=127.0.0.1 npm start`。启动监听地址不再读取配置文件中的旧 `settings.host`。
 
 ### Tailscale 直连（不使用 serve）
 
@@ -46,7 +45,7 @@ npm start
 tailscale serve --https=443 off
 ```
 
-2. 启动服务并在交互菜单选择 `2`（tailscale ip）：
+2. 启动服务（自动选择 Tailscale IP）：
 
 ```bash
 npm start
@@ -102,6 +101,9 @@ Binance 自适应卖出使用以下官方接口与规则：
 
 ## 搬砖说明
 
+- 新建搬砖任务默认每 5 秒扫描一次，两个方向及叠加跨链模式一致；已有任务保留原间隔。
+- 搬砖模板功能已移除，直接在“添加任务”中配置。
+
 - CEX 到 DEX：余额达到阈值后从交易所按可用余额全额提现到链上，不需要填写提现数量，可叠加自动跨链。
 - DEX 到 CEX 直充：选择链上钱包后，需要手动选择区块链；系统通过 OKX Web3 DEX 余额接口读取该链资产，然后从资产下拉框选择 Token。
 - DEX 到 CEX 跨链：勾选「叠加自动跨链」后，跨链相关设置会显示在 DEX 到 CEX 面板下方；源链资产从 LayerZero OFT 列表按链筛选，跨链到目标链后再转账到地址簿选择的 CEX 充值地址。
@@ -129,7 +131,8 @@ Binance 自适应卖出使用以下官方接口与规则：
 
 ```
 server/
-  start.ts             # 启动入口（交互选择监听地址）
+  start.ts             # 启动入口
+  host.ts              # Tailscale 优先的自动监听地址选择
   index.ts             # Express 入口
   security.ts          # Argon2id KDF + AES-256-GCM + 会话管理
   config.ts            # 应用配置读写（SQLite）
@@ -139,7 +142,6 @@ server/
   routes/accounts.ts   # 账户管理路由
   routes/currencies.ts # 币种/链查询路由
   routes/addresses.ts  # 地址簿路由
-  routes/templates.ts  # 提现模板路由
   routes/tasks.ts      # 通用任务路由
   routes/trade.ts      # 现货自动卖出路由
   routes/withdraw.ts   # 提现路由
@@ -176,9 +178,6 @@ public/
 | GET | `/api/addresses` | 列出地址簿 |
 | POST | `/api/addresses` | 新增/更新地址 |
 | DELETE | `/api/addresses/:label` | 删除地址 |
-| GET | `/api/templates` | 列出提现模板 |
-| POST | `/api/templates` | 新增/更新模板 |
-| DELETE | `/api/templates/:name` | 删除模板 |
 | GET | `/api/onchain/settings` | 查询链上设置、支持链与 OKX Web3 配置状态 |
 | PUT | `/api/onchain/settings` | 保存 LayerZero API Key 或 OKX Web3 API Key / Secret / Passphrase |
 | GET | `/api/onchain/wallets` | 列出链上钱包 |

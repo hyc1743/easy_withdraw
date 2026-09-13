@@ -8,6 +8,51 @@
   <style>
     .view { display: none; }
     .view.active { display: block; }
+    body.arb-monitor main { max-width: 1440px; }
+    body.arb-monitor #progress-panel { width: 40%; min-width: 340px; }
+    body.arb-monitor #progress-panel > div { border: 1px solid #374151; }
+    .task-row { border: 1px solid #374151; border-radius: 10px; padding: 16px; background: #1f2937; }
+    .task-row.selected { border-color: #f59e0b; box-shadow: inset 3px 0 #f59e0b; }
+    .task-detail { width: 100%; text-align: left; display: grid; gap: 8px; }
+    .task-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; font-weight: 600; }
+    .task-meta { color: #9ca3af; font-size: 12px; overflow-wrap: anywhere; }
+    .task-parties { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center; margin: 4px 0; padding: 12px; background: #111827; border-radius: 6px; }
+    .task-party { min-width: 0; overflow-wrap: anywhere; }
+    .task-party small { display: block; color: #9ca3af; font-size: 11px; margin-bottom: 3px; }
+    .task-party strong { display: block; font-size: 14px; font-weight: 600; }
+    .task-party code { display: block; color: #9ca3af; font-size: 11px; margin-top: 4px; }
+    .task-party-arrow { color: #fbbf24; }
+    .task-party-via { overflow-wrap: anywhere; min-width: 0; grid-column: 1 / -1; color: #9ca3af; font-size: 11px; }
+    #prog-parties { margin-bottom: 16px; }
+    .task-actions { display: flex; justify-content: flex-end; gap: 16px; margin-top: 12px; font-size: 13px; }
+    .task-actions button { min-height: 32px; }
+    .task-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 20px 0; }
+    .task-stat { padding: 12px; background: #1f2937; border: 1px solid #374151; border-radius: 8px; }
+    .task-stat strong { display: block; font-size: 24px; font-variant-numeric: tabular-nums; }
+    .task-stat span { color: #9ca3af; font-size: 12px; }
+    #arb-config { position: fixed; inset: 0 0 0 auto; margin: 0; height: 100dvh; max-height: 100dvh; width: min(720px, 100%); max-width: 100%; padding: 24px; background: #111827; color: #f3f4f6; border-left: 1px solid #374151; overflow-y: auto; }
+    #arb-config::backdrop { background: rgb(0 0 0 / .65); }
+    body:has(#arb-config[open]) { overflow: hidden; }
+    .task-phase-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0; }
+    .task-phase-list span { padding: 5px 8px; border: 1px solid #374151; border-radius: 4px; font-size: 12px; color: #9ca3af; }
+    .task-phase-list span.current { border-color: #f59e0b; color: #fbbf24; background: #78350f33; }
+    #prog-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+    #prog-metrics div { background: #111827; border-radius: 6px; padding: 12px; overflow-wrap: anywhere; }
+    #prog-metrics dt { color: #9ca3af; font-size: 12px; margin-bottom: 4px; }
+    #prog-metrics dd { font-size: 14px; font-variant-numeric: tabular-nums; }
+    #prog-summary > div { gap: 16px; }
+    #prog-summary > div > span:last-child { text-align: right; overflow-wrap: anywhere; min-width: 0; }
+    #prog-summary > div > span:first-child { flex-shrink: 0; }
+    #prog-log { overflow-wrap: anywhere; max-height: 280px; }
+    #task-back { display: none; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #f59e0b; outline-offset: 3px; }
+    @media (max-width: 1023px) {
+      body.arb-monitor #progress-panel { display: none; }
+      body.arb-monitor.task-detail-open #progress-panel:not(.hidden) { display: block; position: fixed; inset: 0; z-index: 40; width: 100%; min-width: 0; overflow-y: auto; background: #111827; padding: 16px; }
+      body.arb-monitor.task-detail-open { overflow: hidden; }
+      body.arb-monitor #task-back { display: block; }
+      #arb-config { padding: 16px; }
+    }
   </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen">
@@ -143,21 +188,29 @@
 
   <!-- Withdraw View -->
   <div id="view-withdraw" class="view">
-    <h2 class="text-xl font-semibold mb-4">搬砖</h2>
-    <section class="bg-gray-800 border border-gray-700 rounded p-4 mb-4">
-      <h3 class="font-semibold mb-2">搬砖任务列表</h3>
-      <p class="text-xs text-gray-400 mb-3">填写下方配置后添加并启动任务，可同时运行多个搬砖任务。点击任务查看详细进度。</p>
-      <div id="arb-task-list" class="space-y-2" aria-live="polite">暂无搬砖任务</div>
-    </section>
-    <!-- Template bar -->
-    <div class="flex gap-2 mb-4">
-      <select id="w-tpl" class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-        <option value="">选择模版...</option>
-      </select>
-      <button onclick="loadTemplate()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded text-sm">加载</button>
-      <button onclick="saveTemplate()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded text-sm">保存</button>
-      <button onclick="deleteTemplate()" class="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded text-sm">删除</button>
+    <div class="flex items-center justify-between gap-3">
+      <div><h2 class="text-xl font-semibold">搬砖任务</h2><p class="text-xs text-gray-400 mt-1">并行监控，独立管理每个任务</p></div>
+      <button id="btn-add-task" onclick="openTaskConfig()" class="bg-amber-600 hover:bg-amber-700 px-4 py-2 rounded text-sm font-semibold">添加任务</button>
     </div>
+    <div class="task-stats" aria-label="任务统计">
+      <div class="task-stat"><strong id="arb-count-all">0</strong><span>全部</span></div>
+      <div class="task-stat"><strong id="arb-count-running" class="text-amber-400">0</strong><span>运行中</span></div>
+      <div class="task-stat"><strong id="arb-count-stopped">0</strong><span>已停止</span></div>
+      <div class="task-stat"><strong id="arb-count-completed" class="text-green-400">0</strong><span>已完成</span></div>
+    </div>
+    <div class="flex gap-3 mb-4">
+      <select id="arb-state-filter" aria-label="筛选任务状态" onchange="renderArbitrageTasks(_taskList)" class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm">
+        <option value="">全部状态</option><option value="running">运行中</option><option value="stopped">已停止</option><option value="completed">已完成</option>
+      </select>
+      <input id="arb-task-search" aria-label="搜索任务" placeholder="搜索账户、币种、链或任务编号" oninput="renderArbitrageTasks(_taskList)" class="min-w-0 flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm">
+    </div>
+    <p id="arb-list-error" role="status" class="text-sm text-red-400 mb-3 hidden"></p>
+    <div id="arb-task-list" class="space-y-3">正在加载任务…</div>
+    <dialog id="arb-config" aria-labelledby="arb-config-title">
+      <div class="flex items-center justify-between gap-4 mb-5">
+        <h3 id="arb-config-title" class="text-lg font-semibold">添加搬砖任务</h3>
+        <button onclick="closeTaskConfig()" class="text-sm px-3 py-2 bg-gray-800 rounded">关闭</button>
+      </div>
     <div class="flex rounded overflow-hidden border border-gray-700 mb-4">
       <button onclick="setArbitrageDirection('cex_to_dex')" id="arb-dir-cex-to-dex" class="flex-1 bg-amber-600 text-white py-2 text-sm font-semibold">CEX 到 DEX 搬砖</button>
       <button onclick="setArbitrageDirection('dex_to_cex')" id="arb-dir-dex-to-cex" class="flex-1 bg-gray-800 text-gray-300 py-2 text-sm font-semibold">DEX 到 CEX 搬砖</button>
@@ -213,7 +266,7 @@
         <div class="flex gap-3 mb-3">
           <div class="flex-1">
             <label class="text-xs text-gray-400">扫描间隔（秒）</label>
-            <input id="sch-interval" type="number" min="1" value="60" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+            <input id="sch-interval" type="number" min="1" value="5" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
           </div>
           <div class="flex-1">
             <label class="text-xs text-gray-400">触发阈值</label>
@@ -288,7 +341,7 @@
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
           <input id="d2c-threshold" type="number" step="any" min="0" placeholder="触发阈值" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
           <input id="d2c-reserve" type="number" step="any" min="0" placeholder="预留币数" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-          <input id="d2c-interval" type="number" min="1" value="60" placeholder="扫描间隔秒" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <input id="d2c-interval" type="number" min="1" value="5" placeholder="扫描间隔秒" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
         </div>
       </div>
 
@@ -322,7 +375,7 @@
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
           <input id="d2c-threshold-cc" type="number" step="any" min="0" placeholder="触发阈值" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
           <input id="d2c-reserve-cc" type="number" step="any" min="0" placeholder="预留币数" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-          <input id="d2c-interval-cc" type="number" min="1" value="60" placeholder="扫描间隔秒" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <input id="d2c-interval-cc" type="number" min="1" value="5" placeholder="扫描间隔秒" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
         </div>
         <div class="flex flex-wrap items-center gap-2 mb-3">
           <span class="text-xs text-gray-400">滑点</span>
@@ -345,6 +398,7 @@
       </div>
       <div id="d2c-result" class="hidden mt-4 text-sm bg-gray-700 rounded p-3"></div>
     </div>
+    </dialog>
   </div>
 
   <!-- Sell View -->
@@ -595,15 +649,22 @@
   <!-- Right column: progress panel -->
   <div id="progress-panel" class="w-full lg:w-80 shrink-0 hidden">
     <div class="bg-gray-800 rounded-lg p-4 lg:sticky lg:top-6">
-      <h3 class="text-sm font-semibold mb-3 text-gray-300">任务进度</h3>
+      <button id="task-back" onclick="closeTaskDetail()" class="text-amber-400 text-sm mb-4 py-2">返回任务列表</button>
+      <h3 id="prog-title" class="text-base font-semibold mb-3 text-gray-100">任务运行面板</h3>
+      <div class="text-xs text-gray-400 mb-3 break-all">任务编号：<span id="prog-id">--</span></div>
+      <div id="prog-parties" class="hidden"></div>
       <div id="prog-summary" class="text-sm mb-3">
         <div class="flex justify-between mb-1">
           <span class="text-gray-400">类型</span>
           <span id="prog-type">--</span>
         </div>
         <div class="flex justify-between mb-1">
-          <span class="text-gray-400">状态</span>
-          <span id="prog-state" class="text-yellow-400">--</span>
+          <span class="text-gray-400">任务状态</span>
+          <span id="prog-state" role="status" class="text-yellow-400">--</span>
+        </div>
+        <div class="flex justify-between gap-3 mb-1">
+          <span class="text-gray-400 shrink-0">执行阶段</span>
+          <span id="prog-phase" class="text-right">--</span>
         </div>
         <div class="flex justify-between mb-1">
           <span class="text-gray-400">轮次</span>
@@ -622,15 +683,17 @@
           <span id="prog-next">--</span>
         </div>
       </div>
+      <div id="prog-phases" class="task-phase-list hidden" aria-label="任务执行流程"></div>
+      <dl id="prog-metrics" class="hidden"></dl>
       <!-- Progress bar -->
-      <div class="w-full bg-gray-700 rounded-full h-2 mb-3">
+      <div id="prog-bar-track" class="w-full bg-gray-700 rounded-full h-2 mb-3">
         <div id="prog-bar" class="bg-blue-500 h-2 rounded-full transition-all" style="width:0%"></div>
       </div>
       <div class="flex gap-2 mb-3">
         <button onclick="stopActiveTask()" id="btn-prog-stop" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm hidden">停止任务</button>
         <button onclick="resumeActiveTask()" id="btn-prog-resume" class="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded text-sm hidden">继续任务</button>
       </div>
-      <button onclick="terminateActiveTask()" id="btn-prog-terminate" class="w-full bg-gray-700 hover:bg-gray-600 text-white py-2 rounded text-sm mb-3 hidden">取消当前任务</button>
+      <button onclick="terminateActiveTask()" id="btn-prog-terminate" class="w-full bg-gray-700 hover:bg-gray-600 text-white py-2 rounded text-sm mb-3 hidden">删除当前任务</button>
       <div id="prog-links" class="hidden mb-3 text-xs flex flex-wrap gap-2"></div>
       <h4 class="text-xs font-semibold text-gray-400 mb-2">执行日志</h4>
       <div id="prog-log" class="space-y-1 max-h-96 overflow-y-auto text-xs"></div>
@@ -777,6 +840,7 @@ async function api(method, path, body) {
 
 function toast(msg, ok = true) {
   const el = $('toast');
+  ($('arb-config').open ? $('arb-config') : document.body).append(el);
   el.textContent = msg;
   el.className = `fixed top-4 right-4 px-4 py-2 rounded shadow-lg text-sm z-50 ${ok ? 'bg-green-700' : 'bg-red-700'}`;
   setTimeout(() => el.className = 'hidden', 3000);
@@ -797,6 +861,9 @@ function showView(name) {
   if (!_isUnlocked && name !== 'unlock') {
     name = 'unlock';
   }
+  document.body.classList.toggle('arb-monitor', name === 'withdraw');
+  closeTaskDetail();
+  closeTaskConfig();
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   $('view-' + name).classList.add('active');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-white'));
@@ -806,6 +873,7 @@ function showView(name) {
   if (name === 'addressbook') loadAddresses();
   if (name === 'withdraw') {
     loadAccountSelect();
+    void loadTaskPartyDirectory();
     if (currentArbitrageDirection === 'dex_to_cex') populateDexToCexSelects();
     syncSchedule();
   }
@@ -1198,7 +1266,6 @@ async function loadAccountSelect() {
     sel.innerHTML = '<option value="">选择账户</option>' +
       d.accounts.map(a => `<option value="${esc(a.id)}">${esc(a.id)} (${esc(a.exchange)})</option>`).join('');
   } catch (e) { /* ignore if locked */ }
-  loadTemplateSelect();
 }
 
 async function loadSellAccountSelect() {
@@ -2245,63 +2312,6 @@ async function doExecute() {
   }
 }
 
-// ---- Templates ----
-let _allTemplates = [];
-
-async function loadTemplateSelect() {
-  try {
-    const d = await api('GET', '/templates');
-    _allTemplates = d.templates;
-    const sel = $('w-tpl');
-    sel.innerHTML = '<option value="">选择模版...</option>' +
-      _allTemplates.map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
-  } catch (e) { /* ignore */ }
-}
-
-async function loadTemplate() {
-  const name = $('w-tpl').value;
-  if (!name) return;
-  const tpl = _allTemplates.find(t => t.name === name);
-  if (!tpl) return;
-  if (tpl.account_id) $('w-account').value = tpl.account_id;
-  if (tpl.account_id) await onAccountChange();
-  if (tpl.asset) {
-    await selectCurrency(tpl.asset);
-    if (tpl.network) selectNetwork(tpl.network);
-  }
-  if (tpl.address) $('w-address').value = tpl.address;
-  if (tpl.amount) $('w-amount').value = tpl.amount;
-  toast('模版已加载: ' + name);
-}
-
-async function saveTemplate() {
-  const name = prompt('输入模版名称:');
-  if (!name) return;
-  try {
-    await api('POST', '/templates', {
-      name,
-      account_id: $('w-account').value,
-      asset: selectedAsset,
-      network: selectedChain,
-      address: $('w-address').value,
-      amount: $('w-amount').value,
-    });
-    toast('模版已保存');
-    loadTemplateSelect();
-  } catch (e) { toast(e.message, false); }
-}
-
-async function deleteTemplate() {
-  const name = $('w-tpl').value;
-  if (!name) return;
-  if (!confirm('确定删除模版 ' + name + '？')) return;
-  try {
-    await api('DELETE', '/templates/' + encodeURIComponent(name));
-    toast('模版已删除');
-    loadTemplateSelect();
-  } catch (e) { toast(e.message, false); }
-}
-
 // ---- Scheduled withdraw ----
 function showProgressPanel() {
   $('progress-panel').classList.remove('hidden');
@@ -2708,7 +2718,7 @@ function getArbitrageWithdrawBody() {
 
 function getArbitrageBody() {
   const body = {
-    interval_sec: parseInt($('sch-interval').value) || 60,
+    interval_sec: parseInt($('sch-interval').value) || 5,
     threshold_amount: $('arb-threshold').value,
     // Auto withdrawal derives the amount from the live exchange balance.
     withdraw: getArbitrageWithdrawBody(),
@@ -2740,7 +2750,7 @@ function getDexToCexArbitrageBody() {
       token_address: selectedDexToCexRoute?.srcDeployment?.address || $('d2c-token').value.trim(),
       threshold_amount: $('d2c-threshold-cc').value,
       reserve_amount: $('d2c-reserve-cc').value || undefined,
-      interval_sec: parseInt($('d2c-interval-cc').value, 10) || 60,
+      interval_sec: parseInt($('d2c-interval-cc').value, 10) || 5,
       deposit_address: $('d2c-deposit-address-cc').value.trim(),
       crosschain: {
         dst_chain: $('d2c-dst-chain').value,
@@ -2758,7 +2768,7 @@ function getDexToCexArbitrageBody() {
     token_address: $('d2c-direct-token').value.trim(),
     threshold_amount: $('d2c-threshold').value,
     reserve_amount: $('d2c-reserve').value || undefined,
-    interval_sec: parseInt($('d2c-interval').value, 10) || 60,
+    interval_sec: parseInt($('d2c-interval').value, 10) || 5,
     deposit_address: $('d2c-deposit-address').value.trim(),
   };
 }
@@ -2778,13 +2788,14 @@ async function previewDexToCexArbitrage() {
 
 async function startDexToCexArbitrage() {
   const interval = $('d2c-crosschain').checked
-    ? (parseInt($('d2c-interval-cc').value, 10) || 60)
-    : (parseInt($('d2c-interval').value, 10) || 60);
+    ? (parseInt($('d2c-interval-cc').value, 10) || 5)
+    : (parseInt($('d2c-interval').value, 10) || 5);
   const button = $('btn-d2c-start');
   if (button.disabled) return;
   button.disabled = true;
   try {
     const r = await api('POST', '/arbitrage/dex-to-cex/start', getDexToCexArbitrageBody());
+    closeTaskConfig();
     _schCurrentJobId = r.job.id;
     renderScheduleJob(r.job);
     startSchedulePolling();
@@ -2797,12 +2808,13 @@ async function startDexToCexArbitrage() {
 }
 
 async function startArbitrage() {
-  const interval = parseInt($('sch-interval').value) || 60;
+  const interval = parseInt($('sch-interval').value) || 5;
   const button = $('btn-arb-start');
   if (button.disabled) return;
   button.disabled = true;
   try {
     const r = await api('POST', '/withdraw/arbitrage/start', getArbitrageBody());
+    closeTaskConfig();
     _schCurrentJobId = r.job.id;
     renderScheduleJob(r.job);
     startSchedulePolling();
@@ -2821,7 +2833,7 @@ function setScheduleButtons(isRunning) {
 
 function setProgressButtons(job) {
   const isRunning = !!job && job.state === 'running';
-  const canResume = !!job && (job.state === 'running' || job.state === 'stopped');
+  const canResume = !!job && job.state === 'stopped';
   const hasJob = !!job;
   $('btn-prog-stop').classList.toggle('hidden', !isRunning);
   $('btn-prog-resume').classList.toggle('hidden', !canResume);
@@ -2829,10 +2841,16 @@ function setProgressButtons(job) {
 }
 
 function clearProgressPanel() {
+  closeTaskDetail();
   _schCurrentJobId = null;
   _lastRenderedTask = null;
   stopSchedulePolling();
   $('progress-panel').classList.add('hidden');
+  $('prog-parties').replaceChildren();
+  $('prog-parties').classList.add('hidden');
+  $('prog-title').textContent = '任务运行面板';
+  $('prog-id').textContent = '--';
+  $('prog-phase').textContent = '--';
   $('prog-type').textContent = '--';
   $('prog-state').textContent = '--';
   $('prog-state').className = 'text-yellow-400';
@@ -2941,17 +2959,29 @@ function renderScheduleJob(job) {
     ? Math.max(0, Math.ceil((new Date(job.next_run_at).getTime() - Date.now()) / 1000))
     : null;
   const subject = isCrosschain
-    ? `${job.payload?.symbol || '--'} ${job.payload?.src_chain || '--'} -> ${job.payload?.dst_chain || '--'}`
+    ? `${job.payload?.symbol || '--'} ${job.payload?.src_chain || '--'} -> ${job.payload?.crosschain?.dst_chain || job.payload?.dst_chain || job.payload?.src_chain || '--'}`
     : isSell
     ? (job.payload?.symbol || '--')
     : isDexToCex
-    ? `${job.payload?.symbol || '--'} ${job.payload?.src_chain || '--'} -> ${job.payload?.dst_chain || '--'}`
+    ? `${job.payload?.symbol || '--'} ${job.payload?.src_chain || '--'} -> ${job.payload?.crosschain?.dst_chain || job.payload?.dst_chain || job.payload?.src_chain || '--'}`
     : `${job.payload?.asset || '--'} / ${job.payload?.network || '--'}`;
 
   const isSweep = isCrosschain && job.payload?.dynamic_amount;
   $('prog-type').textContent = formatTaskType(job);
   $('prog-state').textContent = stateText;
-  $('prog-state').className = stateClass;
+  $('prog-state').className = stateClass + ' font-semibold';
+  $('prog-title').textContent = (isArb || isDexToCex)
+    ? `${job.payload?.asset || job.payload?.symbol || '--'} · ${isArb ? 'CEX → DEX' : 'DEX → CEX'}`
+    : '任务运行面板';
+  $('prog-id').textContent = job.id;
+  $('prog-phase').textContent = taskPhaseName(job.progress?.phase);
+  renderTaskMetrics(job);
+  $('prog-parties').classList.toggle('hidden', !(isArb || isDexToCex));
+  $('prog-parties').innerHTML = (isArb || isDexToCex) ? taskPartiesHtml(job, true) : '';
+  document.querySelectorAll('[data-task-id]').forEach(row => {
+    row.classList.toggle('selected', row.dataset.taskId === job.id);
+    row.querySelector('.task-detail')?.setAttribute('aria-pressed', String(row.dataset.taskId === job.id));
+  });
   $('prog-interval').textContent = isSingleCrosschain ? '--' : `${job.interval_sec}s`;
   $('prog-round').textContent = isArb
     ? `已提现: ${job.progress?.withdraw_count || 0} 次`
@@ -2968,12 +2998,17 @@ function renderScheduleJob(job) {
   renderTaskLinks(job);
 
   const logs = job.logs || [];
-  $('prog-log').innerHTML = logs.map((l) => {
+  const logHtml = logs.map((l) => {
     const color = l.ok ? 'text-green-400' : 'text-red-400';
     const time = new Date(l.timestamp).toLocaleTimeString();
     return `<div class="${color}">[${esc(time)}] ${esc(l.message)}</div>`;
   }).join('');
 
+  if ($('prog-log').innerHTML !== logHtml) {
+    const scroll = $('prog-log').scrollTop;
+    $('prog-log').innerHTML = logHtml;
+    $('prog-log').scrollTop = scroll;
+  }
   $('sch-status').classList.remove('hidden');
   const sweepBalance = isSweep ? ` ｜ 余额: ${esc(job.progress?.dynamic_balance || '--')}` : '';
   const arbBalance = isArb && job.progress?.last_balance ? ` ｜ 余额: ${esc(job.progress.last_balance)}` : '';
@@ -3006,33 +3041,164 @@ function renderScheduleJob(job) {
 }
 
 let _taskList = [];
+const _deletedTaskIds = new Set();
 let _scheduleSyncing = false;
 
+function openTaskConfig() { $('arb-config').showModal(); }
+function closeTaskConfig() { if ($('arb-config').open) $('arb-config').close(); }
+function closeTaskDetail() {
+  const wasOpen = document.body.classList.contains('task-detail-open');
+  document.body.classList.remove('task-detail-open');
+  if (wasOpen) {
+    const selected = Array.from(document.querySelectorAll('[data-task-id]')).find(row => row.dataset.taskId === _schCurrentJobId);
+    selected?.querySelector('.task-detail')?.focus();
+  }
+}
+let taskPartyDirectory = { accounts: [], wallets: [], addresses: [] };
+
+async function loadTaskPartyDirectory() {
+  const results = await Promise.allSettled([
+    api('GET', '/accounts'), api('GET', '/onchain/wallets'), api('GET', '/addresses'),
+  ]);
+  ['accounts', 'wallets', 'addresses'].forEach((key, index) => {
+    if (results[index].status === 'fulfilled') taskPartyDirectory[key] = results[index].value[key] || [];
+  });
+  if (!_isUnlocked) return;
+  renderArbitrageTasks(_taskList);
+  if (_lastRenderedTask) renderScheduleJob(_lastRenderedTask);
+}
+
+function sameTaskAddress(left, right) {
+  if (!left || !right) return false;
+  const a = String(left).trim();
+  const b = String(right).trim();
+  return /^0x[0-9a-f]{40}$/i.test(a) && /^0x[0-9a-f]{40}$/i.test(b)
+    ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+function getTaskParties(job) {
+  const p = job.payload || {};
+  const directory = taskPartyDirectory;
+  const walletById = id => directory.wallets.find(wallet => wallet.id === id);
+  const addressParty = (address, kind, allowWallet = true) => {
+    const wallet = allowWallet && directory.wallets.find(wallet => sameTaskAddress(wallet.address, address));
+    const labels = directory.addresses.filter(entry => sameTaskAddress(entry.address, address)).map(entry => entry.label);
+    return { name: wallet ? wallet.id : labels.join(' / ') || '未标注地址', kind, address: address || '' };
+  };
+  if (job.job_type === 'dex_to_cex_arbitrage') {
+    const wallet = walletById(p.wallet_id);
+    return {
+      from: { name: p.wallet_id || '未指定钱包', kind: '链上钱包', address: wallet?.address || '' },
+      to: addressParty(p.deposit_address, '交易所充值地址', false),
+    };
+  }
+  const account = directory.accounts.find(account => account.id === p.account_id);
+  const from = { name: p.account_id || '未指定账户', kind: account?.exchange ? account.exchange.toUpperCase() + ' 交易所账户' : '交易所账户', address: '' };
+  if (p.crosschain) {
+    const wallet = walletById(p.crosschain.wallet_id);
+    return {
+      from,
+      to: addressParty(p.crosschain.recipient || wallet?.address, '最终收款钱包'),
+      via: addressParty(p.address, '提现接收地址'),
+    };
+  }
+  return { from, to: addressParty(p.address, '收款钱包') };
+}
+
+function taskPartiesHtml(job, fullAddress = false) {
+  const parties = getTaskParties(job);
+  const addressText = value => !fullAddress && value.length > 18 ? value.slice(0, 8) + '…' + value.slice(-6) : value;
+  const partyHtml = (party, direction) => `<div class="task-party"><small>${direction} · ${esc(party.kind)}</small><strong>${esc(party.name)}</strong>${party.address ? `<code title="${esc(party.address)}">${esc(addressText(party.address))}</code>` : ''}</div>`;
+  const via = parties.via ? `<div class="task-party-via">途经提现地址：${esc(parties.via.name)}${parties.via.address ? ' · ' + esc(addressText(parties.via.address)) : ''}</div>` : '';
+  return `<div class="task-parties" aria-label="任务来源和目标">${partyHtml(parties.from, '来源')}<span class="task-party-arrow" aria-hidden="true">→</span>${partyHtml(parties.to, '目标')}${via}</div>`;
+}
+
+function taskPhaseName(phase) {
+  return ({
+    check_balance: '检查交易所余额', check_source_balance: '检查源链余额',
+    wait_withdrawal: '等待提现到账', do_crosschain: '提交跨链交易',
+    wait_delivery: '等待跨链到账', waiting_delivery: '等待跨链到账',
+    do_deposit_transfer: '转账至交易所', wait_deposit_confirmed: '等待充值确认',
+    ready_to_send: '等待发送', delivered: '已到账',
+  })[phase] || phase || '--';
+}
+function renderTaskMetrics(job) {
+  const arb = ['arbitrage', 'dex_to_cex_arbitrage'].includes(job.job_type);
+  $('prog-bar-track').classList.toggle('hidden', arb);
+  $('prog-phases').classList.toggle('hidden', !arb);
+  $('prog-metrics').style.display = arb ? 'grid' : 'none';
+  if (!arb) return;
+  const p = job.payload || {};
+  const progress = job.progress || {};
+  const d2c = job.job_type === 'dex_to_cex_arbitrage';
+  const phases = d2c ? ['check_source_balance'] : ['check_balance', 'wait_withdrawal'];
+  if (p.crosschain) phases.push('do_crosschain', 'wait_delivery');
+  if (d2c) phases.push('do_deposit_transfer', 'wait_deposit_confirmed');
+  $('prog-phases').innerHTML = phases.map(phase =>
+    `<span class="${phase === progress.phase ? 'current' : ''}" ${phase === progress.phase ? 'aria-current="step"' : ''}>${esc(taskPhaseName(phase))}</span>`
+  ).join('');
+  const metrics = [
+    ['当前余额', d2c ? progress.last_source_balance : progress.last_balance],
+    ['触发阈值', p.threshold_amount],
+    [d2c ? '已充值次数' : '已提现次数', d2c ? progress.completed_count ?? job.done_count : progress.withdraw_count],
+  ];
+  if (p.crosschain && !d2c) metrics.push(['已跨链次数', progress.delivered_count ?? 0]);
+  $('prog-metrics').innerHTML = metrics.map(([label, value]) =>
+    `<div><dt>${esc(label)}</dt><dd>${esc(String(value ?? '--'))}</dd></div>`
+  ).join('');
+}
 function renderArbitrageTasks(jobs) {
-  _taskList = jobs;
-  const tasks = jobs.filter(job => ['arbitrage', 'dex_to_cex_arbitrage'].includes(job.job_type));
+  _taskList = jobs.filter(job => !_deletedTaskIds.has(job.id));
+  const tasks = _taskList.filter(job => ['arbitrage', 'dex_to_cex_arbitrage'].includes(job.job_type));
+  for (const state of ['all', 'running', 'stopped', 'completed']) {
+    $('arb-count-' + state).textContent = state === 'all' ? tasks.length : tasks.filter(job => job.state === state).length;
+  }
+  const query = $('arb-task-search').value.trim().toLowerCase();
+  const state = $('arb-state-filter').value;
+  const visible = tasks.filter(job => (!state || job.state === state) &&
+    [job.id, job.payload?.asset, job.payload?.symbol, job.payload?.network, job.payload?.src_chain,
+      job.payload?.crosschain?.dst_chain, ...Object.values(getTaskParties(job)).flatMap(party => [party.name, party.address, party.kind])].some(value => String(value || '').toLowerCase().includes(query)));
   const container = $('arb-task-list');
+  // Avoid replacing focused controls every polling tick when the list is unchanged.
+  const signature = JSON.stringify([visible, _schCurrentJobId, taskPartyDirectory]);
+  if (container.dataset.signature === signature) return;
+  container.dataset.signature = signature;
   container.replaceChildren();
-  if (!tasks.length) {
-    container.textContent = '暂无搬砖任务';
+  if (!visible.length) {
+    container.textContent = tasks.length ? '没有匹配的任务，请调整筛选条件。' : '暂无搬砖任务，点击“添加任务”开始。';
     return;
   }
-  for (const job of tasks) {
-    const row = document.createElement('div');
-    row.className = 'flex flex-wrap items-center gap-2 border border-gray-700 rounded p-3';
+  for (const job of visible) {
+    const row = document.createElement('article');
+    row.className = 'task-row' + (job.id === _schCurrentJobId ? ' selected' : '');
+    row.dataset.taskId = job.id;
     const detail = document.createElement('button');
-    detail.className = 'flex-1 min-w-0 text-left text-sm break-words';
-    const payload = job.payload || {};
-    detail.textContent = `${formatTaskType(job)} · ${payload.asset || payload.symbol || '--'} · ${payload.network || payload.src_chain || '--'} · ${formatState(job.state)[0]} · ${job.id.slice(-8)}`;
+    detail.className = 'task-detail';
+    detail.setAttribute('aria-pressed', String(job.id === _schCurrentJobId));
+    const p = job.payload || {};
+    const [stateName, stateClass] = formatState(job.state);
+    const direction = job.job_type === 'arbitrage' ? 'CEX → DEX' : 'DEX → CEX';
+    const source = p.network || p.src_chain || '--';
+    const destination = p.crosschain?.dst_chain;
+    const count = job.job_type === 'arbitrage' ? job.progress?.withdraw_count : job.progress?.completed_count ?? job.done_count;
+    detail.innerHTML = `<div class="task-heading"><span>${esc(p.asset || p.symbol || '--')} <span class="text-sm text-gray-400 font-normal ml-2">${direction}</span></span><span class="text-xs ${stateClass}">${stateName}</span></div>
+      ${taskPartiesHtml(job)}
+      <div class="task-meta">${esc(source)}${destination ? ' → ' + esc(destination) : ''}</div>
+      <div class="text-sm">${esc(taskPhaseName(job.progress?.phase))}<span class="text-gray-400"> · ${job.job_type === 'arbitrage' ? '已提现' : '已充值'} ${esc(String(count ?? 0))} 次</span></div>
+      <div class="task-meta">查看详情 · ${esc(job.id.slice(-8))}</div>`;
     detail.onclick = () => {
       _schCurrentJobId = job.id;
       renderScheduleJob(job);
-      if (jobs.some(task => task.state === 'running')) startSchedulePolling();
+      document.body.classList.add('task-detail-open');
+      if (window.matchMedia('(max-width: 1023px)').matches) $('task-back').focus();
+      if (_taskList.some(task => task.state === 'running')) startSchedulePolling();
     };
     row.append(detail);
+    const actions = document.createElement('div');
+    actions.className = 'task-actions';
     if (job.state !== 'completed') {
       const button = document.createElement('button');
-      button.className = 'text-sm px-3 py-2 rounded bg-gray-700 hover:bg-gray-600';
+      button.className = 'text-amber-400 hover:text-amber-300';
       button.textContent = job.state === 'running' ? '停止' : '继续';
       button.onclick = async () => {
         button.disabled = true;
@@ -3044,9 +3210,36 @@ function renderArbitrageTasks(jobs) {
         } catch (e) { toast(e.message, false); }
         finally { button.disabled = false; }
       };
-      row.append(button);
+      actions.append(button);
     }
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'text-gray-400 hover:text-red-400';
+    deleteButton.textContent = '删除';
+    deleteButton.setAttribute('aria-label', '删除任务 ' + job.id);
+    deleteButton.onclick = async () => {
+      deleteButton.disabled = true;
+      try { await deleteScheduleTask(job); }
+      finally { deleteButton.disabled = false; }
+    };
+    actions.append(deleteButton);
+    row.append(actions);
     container.append(row);
+  }
+}
+
+async function deleteScheduleTask(job) {
+  if (!confirm('确定删除任务 ' + job.id + '？任务配置和日志将被删除，已提交的提现或链上交易不会撤回。')) return;
+  try {
+    await api('POST', `/tasks/${encodeURIComponent(job.id)}/terminate`);
+    _deletedTaskIds.add(job.id);
+    dismissLatestTask(job);
+    if (_schCurrentJobId === job.id) clearProgressPanel();
+    renderArbitrageTasks(_taskList.filter(task => task.id !== job.id));
+    startSchedulePolling();
+    await syncSchedule();
+    toast('任务已删除');
+  } catch (e) {
+    toast(e.message, false);
   }
 }
 
@@ -3055,6 +3248,7 @@ async function syncSchedule() {
   _scheduleSyncing = true;
   try {
     const listing = await api('GET', '/tasks');
+    $('arb-list-error').classList.add('hidden');
     renderArbitrageTasks(listing.jobs || []);
     const running = _taskList.filter(job => job.state === 'running');
     const selected = _taskList.find(job => job.id === _schCurrentJobId);
@@ -3075,6 +3269,7 @@ async function syncSchedule() {
 
     if (_schCurrentJobId) {
       const d = await api('GET', `/tasks/${encodeURIComponent(_schCurrentJobId)}`);
+      if (_deletedTaskIds.has(d.job.id)) return;
       renderScheduleJob(d.job);
       if (d.job.state !== 'running') stopSchedulePolling();
       return;
@@ -3149,7 +3344,8 @@ async function syncSchedule() {
     setScheduleButtons(false);
     setProgressButtons(null);
   } catch (e) {
-    $('arb-task-list').textContent = '任务列表加载失败：' + e.message;
+    $('arb-list-error').textContent = '任务列表加载失败：' + e.message;
+    $('arb-list-error').classList.remove('hidden');
   } finally {
     _scheduleSyncing = false;
   }
@@ -3216,27 +3412,15 @@ async function resumeActiveTask() {
 }
 
 async function terminateActiveTask() {
+  if (!_schCurrentJobId) {
+    toast('没有可删除的任务', false);
+    return;
+  }
   try {
-    if (!_schCurrentJobId) {
-      clearProgressPanel();
-      toast('当前任务已取消');
-      return;
-    }
-
-    let state = null;
-    try {
-      const d = await api('GET', `/tasks/${encodeURIComponent(_schCurrentJobId)}`);
-      state = d.job?.state || null;
-    } catch (e) {
-      state = null;
-    }
-
-    await api('POST', `/tasks/${encodeURIComponent(_schCurrentJobId)}/terminate`);
-
-    dismissLatestTask(_lastRenderedTask);
-    clearProgressPanel();
-    await syncSchedule();
-    toast('当前任务已取消');
+    const id = _schCurrentJobId;
+    const job = _taskList.find(task => task.id === id)
+      || (await api('GET', `/tasks/${encodeURIComponent(id)}`)).job;
+    if (job) await deleteScheduleTask(job);
   } catch (e) {
     toast(e.message, false);
   }
