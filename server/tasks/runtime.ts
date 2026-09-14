@@ -60,6 +60,10 @@ export class TaskRuntime {
     return job;
   }
 
+  isExecuting(jobId: string): boolean {
+    return this.tasks.get(jobId)?.executing ?? false;
+  }
+
   getTask(jobId: string): TaskJob | null {
     return this.tasks.get(jobId)?.job ?? null;
   }

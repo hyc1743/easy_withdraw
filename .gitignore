@@ -34,3 +34,5 @@ tests/*
 !tests/startup-defaults.test.ts
 
 !tests/task-parties-ui.test.ts
+
+!tests/task-quick-edit.test.ts

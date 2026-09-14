@@ -694,6 +694,27 @@
         <button onclick="resumeActiveTask()" id="btn-prog-resume" class="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded text-sm hidden">继续任务</button>
       </div>
       <button onclick="terminateActiveTask()" id="btn-prog-terminate" class="w-full bg-gray-700 hover:bg-gray-600 text-white py-2 rounded text-sm mb-3 hidden">删除当前任务</button>
+      <form id="task-edit-form" class="hidden border border-gray-700 rounded p-3 mb-4 space-y-3" onsubmit="saveTaskQuickEdit(event)" oninput="_taskEditDirty = true">
+        <h4 class="font-semibold text-sm">快速编辑</h4>
+        <label class="block text-xs text-gray-400">来源账户
+          <select id="task-edit-source" required class="mt-1 w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm text-white"></select>
+        </label>
+        <label class="block text-xs text-gray-400">目标账户 / 收款地址
+          <select id="task-edit-target" required class="mt-1 w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm text-white"></select>
+        </label>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block text-xs text-gray-400">触发阈值
+            <input id="task-edit-threshold" required type="number" min="0" step="any" class="mt-1 w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm text-white">
+          </label>
+          <label class="block text-xs text-gray-400">扫描间隔（秒）
+            <input id="task-edit-interval" required type="number" min="1" max="2147483" step="1" class="mt-1 w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm text-white">
+          </label>
+        </div>
+        <p id="task-edit-note" class="text-xs text-gray-400"></p>
+        <p id="task-edit-feedback" role="status" class="text-xs text-amber-400"></p>
+        <button type="button" onclick="reloadTaskQuickEdit()" class="text-xs text-gray-400 hover:text-white">放弃修改并重新加载</button>
+        <button id="task-edit-save" type="submit" class="w-full bg-amber-600 hover:bg-amber-700 rounded py-2 text-sm font-semibold">保存修改</button>
+      </form>
       <div id="prog-links" class="hidden mb-3 text-xs flex flex-wrap gap-2"></div>
       <h4 class="text-xs font-semibold text-gray-400 mb-2">执行日志</h4>
       <div id="prog-log" class="space-y-1 max-h-96 overflow-y-auto text-xs"></div>
@@ -2846,6 +2867,9 @@ function clearProgressPanel() {
   _lastRenderedTask = null;
   stopSchedulePolling();
   $('progress-panel').classList.add('hidden');
+  _taskEditId = null;
+  _taskEditDirty = false;
+  $('task-edit-form').classList.add('hidden');
   $('prog-parties').replaceChildren();
   $('prog-parties').classList.add('hidden');
   $('prog-title').textContent = '任务运行面板';
@@ -2976,6 +3000,7 @@ function renderScheduleJob(job) {
   $('prog-id').textContent = job.id;
   $('prog-phase').textContent = taskPhaseName(job.progress?.phase);
   renderTaskMetrics(job);
+  renderTaskQuickEdit(job);
   $('prog-parties').classList.toggle('hidden', !(isArb || isDexToCex));
   $('prog-parties').innerHTML = (isArb || isDexToCex) ? taskPartiesHtml(job, true) : '';
   document.querySelectorAll('[data-task-id]').forEach(row => {
@@ -3054,6 +3079,102 @@ function closeTaskDetail() {
     selected?.querySelector('.task-detail')?.focus();
   }
 }
+let _taskEditId = null;
+let _taskEditRevision = null;
+let _taskEditDirty = false;
+let _taskEditDirectoryKey = '';
+let _taskEditSaving = false;
+
+function renderTaskQuickEdit(job) {
+  const editable = job.state === 'stopped' && ['arbitrage', 'dex_to_cex_arbitrage'].includes(job.job_type);
+  $('task-edit-form').classList.toggle('hidden', !editable);
+  if (!editable) {
+    _taskEditId = null;
+    _taskEditDirty = false;
+    return;
+  }
+  const directoryKey = JSON.stringify(taskPartyDirectory);
+  if (_taskEditId === job.id && (_taskEditDirty || _taskEditDirectoryKey === directoryKey)) return;
+  _taskEditId = job.id;
+  _taskEditRevision = job.updated_at;
+  _taskEditDirectoryKey = directoryKey;
+  _taskEditDirty = false;
+  const d2c = job.job_type === 'dex_to_cex_arbitrage';
+  const p = job.payload;
+  const source = d2c ? p.wallet_id : p.account_id;
+  const target = d2c ? p.deposit_address : p.crosschain ? getTaskParties(job).to.address || p.address : p.address;
+  const fill = (id, options, current) => {
+    const select = $(id);
+    select.replaceChildren();
+    if (!options.some(option => option.value === current)) options.unshift({ value: current, label: '当前：' + current });
+    for (const option of options) select.add(new Option(option.label, option.value));
+    select.value = current;
+  };
+  fill('task-edit-source', (d2c ? taskPartyDirectory.wallets : taskPartyDirectory.accounts).map(item => ({
+    value: item.id, label: item.id + (item.exchange ? ' (' + item.exchange.toUpperCase() + ')' : ''),
+  })), source);
+  const targets = taskPartyDirectory.addresses.map(item => ({ value: item.address, label: item.label + ' · ' + item.address }));
+  if (!d2c) targets.push(...taskPartyDirectory.wallets.map(item => ({ value: item.address, label: item.id + ' · ' + item.address })));
+  fill('task-edit-target', targets, target);
+  $('task-edit-threshold').value = p.threshold_amount;
+  $('task-edit-interval').value = job.interval_sec;
+  const idle = job.progress?.phase === (d2c ? 'check_source_balance' : 'check_balance');
+  $('task-edit-source').disabled = !idle;
+  $('task-edit-target').disabled = !idle || (!d2c && !p.crosschain && !!p.address_tag);
+  $('task-edit-note').textContent = !idle
+    ? '本轮操作尚未完成，暂不可更换来源和目标。'
+    : p.address_tag ? '目标地址带 Memo/Tag，更换目标请新建任务。保存后任务保持停止。'
+    : '币种和链保持不变，请确认所选账户支持当前链。保存后任务保持停止；目标可在地址簿中添加。';
+  $('task-edit-feedback').textContent = '';
+}
+
+async function reloadTaskQuickEdit() {
+  if (_taskEditSaving || !_taskEditId) return;
+  const id = _taskEditId;
+  if (_taskEditDirty && !confirm('放弃未保存的修改？')) return;
+  try {
+    const result = await api('GET', '/tasks/' + encodeURIComponent(id));
+    if (_schCurrentJobId !== id) return;
+    _taskEditId = null;
+    _taskEditDirty = false;
+    renderScheduleJob(result.job);
+  } catch (e) { toast(e.message, false); }
+}
+
+async function saveTaskQuickEdit(event) {
+  event.preventDefault();
+  if (_taskEditSaving || !_taskEditId) return;
+  _taskEditSaving = true;
+  $('task-edit-form').inert = true;
+  const id = _taskEditId;
+  $('task-edit-save').disabled = true;
+  try {
+    const result = await api('PATCH', '/tasks/' + encodeURIComponent(id), {
+      updated_at: _taskEditRevision,
+      source_id: $('task-edit-source').value,
+      target_address: $('task-edit-target').value,
+      threshold_amount: $('task-edit-threshold').value,
+      interval_sec: Number($('task-edit-interval').value),
+    });
+    _taskList = _taskList.map(job => job.id === id ? result.job : job);
+    if (_schCurrentJobId === id) {
+      _taskEditId = null;
+      _taskEditDirty = false;
+      renderScheduleJob(result.job);
+      $('task-edit-feedback').textContent = '已保存，点击“继续任务”后按新配置执行。';
+    }
+    renderArbitrageTasks(_taskList);
+    toast('任务配置已保存，仍保持停止');
+  } catch (e) {
+    if (_taskEditId === id) $('task-edit-feedback').textContent = e.message;
+    toast(e.message, false);
+  } finally {
+    _taskEditSaving = false;
+    $('task-edit-form').inert = false;
+    $('task-edit-save').disabled = false;
+  }
+}
+
 let taskPartyDirectory = { accounts: [], wallets: [], addresses: [] };
 
 async function loadTaskPartyDirectory() {
@@ -3187,6 +3308,8 @@ function renderArbitrageTasks(jobs) {
       <div class="text-sm">${esc(taskPhaseName(job.progress?.phase))}<span class="text-gray-400"> · ${job.job_type === 'arbitrage' ? '已提现' : '已充值'} ${esc(String(count ?? 0))} 次</span></div>
       <div class="task-meta">查看详情 · ${esc(job.id.slice(-8))}</div>`;
     detail.onclick = () => {
+      if (_taskEditSaving) { toast('正在保存，请稍候', false); return; }
+      if (_taskEditDirty && _taskEditId !== job.id && !confirm('切换任务将放弃未保存的修改，继续？')) return;
       _schCurrentJobId = job.id;
       renderScheduleJob(job);
       document.body.classList.add('task-detail-open');
@@ -3201,6 +3324,7 @@ function renderArbitrageTasks(jobs) {
       button.className = 'text-amber-400 hover:text-amber-300';
       button.textContent = job.state === 'running' ? '停止' : '继续';
       button.onclick = async () => {
+        if (job.state === 'stopped' && _taskEditDirty && _taskEditId === job.id) { toast('请先保存编辑内容，再继续任务', false); return; }
         button.disabled = true;
         try {
           const result = await api('POST', `/tasks/${encodeURIComponent(job.id)}/${job.state === 'running' ? 'stop' : 'resume'}`);
@@ -3393,6 +3517,7 @@ async function resumeSchedule() {
 }
 
 async function resumeActiveTask() {
+  if (_taskEditDirty && _taskEditId === _schCurrentJobId) { toast('请先保存编辑内容，再继续任务', false); return; }
   try {
     if (!_schCurrentJobId) {
       const active = await api('GET', '/tasks/active');
